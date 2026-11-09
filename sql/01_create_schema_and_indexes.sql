@@ -296,7 +296,7 @@ INCLUDE (
     RequestNumber, CustomerId, CallerPhone, VehiclePlate, VehicleModel,
     IssueType, PickupAddress, DestinationAddress, AssignedTruckId,
     TruckPrioritySequence, ActualDistanceKm, AllowedDistanceKm,
-    OverageKm, OverageAmount, CashCollected, PolicyId
+    OverageKm, OverageAmount, CashCollected, IsNightShift, PolicyId
 );
 GO
 

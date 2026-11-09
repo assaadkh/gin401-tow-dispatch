@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 const L = window.L;
-
 const API_BASE = '/api';
 
 // Default center: Beirut, Lebanon
@@ -24,8 +23,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [policyWarningModal, setPolicyWarningModal] = useState(null);
-
-  // Yeastar PBX Incoming Call Simulation Modal
   const [yeastarCallModal, setYeastarCallModal] = useState(null);
 
   // Call Intake & Eligibility Form State
@@ -34,10 +31,10 @@ export default function App() {
   const [eligibility, setEligibility] = useState(null);
   const [intakeForm, setIntakeForm] = useState({
     callerName: 'Rami Khoury',
-    callerPhone: '+961 3 111 222',
+    callerPhone: '+961-03-111222',
     vehicleDesc: 'BMW X5 (Black)',
     noPlate: false,
-    plateCodeId: 2, // G
+    plateCodeId: 2, // M
     plateDigits: '149283',
     pickupAddress: 'Hamra Main Street, Beirut',
     pickupLat: 33.8960,
@@ -74,12 +71,12 @@ export default function App() {
   // Policy Quota Tier Editor State
   const [editingTier, setEditingTier] = useState(null);
   const [newTierForm, setNewTierForm] = useState({
-    sequenceOrder: 3,
+    tierSequence: 3,
     coverageType: 'All',
     allowedTows: 2,
+    usedTows: 0,
     maxDistanceKm: 40,
-    minIntervalDays: 7,
-    coPayPercentage: 0
+    minIntervalDays: 7
   });
   const [showTierEditor, setShowTierEditor] = useState(false);
 
@@ -96,17 +93,17 @@ export default function App() {
   const [selectedTruckByReq, setSelectedTruckByReq] = useState({});
 
   // Concurrency Lab State
-  const [concurrencyTargetId, setConcurrencyTargetId] = useState('');
   const [concurrencyResult, setConcurrencyResult] = useState(null);
   const [concurrencyRunning, setConcurrencyRunning] = useState(false);
   const [optimisticNote, setOptimisticNote] = useState('Updated pickup note: customer moved 50m ahead.');
   const [optimisticResult, setOptimisticResult] = useState(null);
 
   // Performance & Security Lab State
+  const [perfMode, setPerfMode] = useState('date_status'); // 'date_status' | 'policy' | 'plate'
   const [perfStatus, setPerfStatus] = useState('Done');
-  const [perfStart, setPerfStart] = useState('2025-01-01');
+  const [perfStart, setPerfStart] = useState('2026-01-01');
   const [perfEnd, setPerfEnd] = useState('2026-12-31');
-  const [perfPlate, setPerfPlate] = useState('');
+  const [perfPlate, setPerfPlate] = useState('M 100001');
   const [perfResult, setPerfResult] = useState(null);
   const [perfLoading, setPerfLoading] = useState(false);
 
@@ -129,12 +126,6 @@ export default function App() {
       const res = await fetch(`${API_BASE}/dashboard`);
       const data = await res.json();
       setDashboard(data);
-      const draftOrPending = data.activeRequests?.find(
-        r => r.status === 'Draft' || r.status === 'PendingInsurance'
-      );
-      if (draftOrPending && !concurrencyTargetId) {
-        setConcurrencyTargetId(draftOrPending.requestId);
-      }
     } catch (err) {
       showToast('error', 'Backend Connection Error', err.message);
     } finally {
@@ -150,28 +141,33 @@ export default function App() {
   const checkEligibility = async (showPopupOnViolation = false) => {
     if (!selectedPolicyId) return;
     try {
-      const url = `${API_BASE}/policies/${selectedPolicyId}/check-eligibility?incidentType=${encodeURIComponent(
+      const url = `${API_BASE}/policies/${selectedPolicyId}/check-eligibility?issueType=${encodeURIComponent(
         selectedIncidentType
-      )}&pickupLat=${intakeForm.pickupLat}&pickupLng=${intakeForm.pickupLng}&dropoffLat=${intakeForm.dropoffLat}&dropoffLng=${intakeForm.dropoffLng}`;
+      )}&lat1=${intakeForm.pickupLat}&lng1=${intakeForm.pickupLng}&lat2=${intakeForm.dropoffLat}&lng2=${intakeForm.dropoffLng}`;
       const res = await fetch(url);
       const data = await res.json();
       setEligibility(data);
 
       if (showPopupOnViolation && data) {
         const policyObj = dashboard?.policies?.find(p => p.policyId === Number(selectedPolicyId));
-        const policyLabel = policyObj ? `${policyObj.policyNumber} (${policyObj.customerName})` : `Policy #${selectedPolicyId}`;
+        const policyLabel = policyObj
+          ? `${policyObj.policyNumber} (${policyObj.customerName})`
+          : `Policy #${selectedPolicyId}`;
 
-        if ((selectedIncidentType === 'Accident' || selectedIncidentType === 'Winch') && data.remainingAccident <= 0) {
+        if (
+          (selectedIncidentType === 'Accident' || selectedIncidentType === 'Winch') &&
+          data.remainingCategoryTows <= 0
+        ) {
           setPolicyWarningModal({
             title: '🚨 Accident Tow Not Allowed',
             message: `The insurance policy '${policyLabel}' does not allow any accidental tows anymore! Remaining accident tows: 0. Direct customer billing is required.`,
-            reason: data.rejectionReason
+            reason: data.statusBanner
           });
         } else if (!data.isEligible) {
           setPolicyWarningModal({
             title: '⚠️ Policy Quota / Cooldown Restriction',
-            message: data.rejectionReason,
-            reason: `Days since last tow: ${data.daysSinceLastTow} days | Min required interval: ${data.requiredCooldownDays} days`
+            message: data.statusBanner,
+            reason: `Days since last tow: ${data.daysSinceLastTow ?? 'N/A'} days | Min required cooldown interval: ${data.requiredCooldownDays} days`
           });
         }
       }
@@ -236,10 +232,13 @@ export default function App() {
         maxZoom: 20,
         attribution: '&copy; Google Maps'
       });
-      const googleTrafficMap = L.tileLayer('https://mt1.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}', {
-        maxZoom: 20,
-        attribution: '&copy; Google Maps Traffic'
-      });
+      const googleTrafficMap = L.tileLayer(
+        'https://mt1.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}',
+        {
+          maxZoom: 20,
+          attribution: '&copy; Google Maps Traffic'
+        }
+      );
       const googleHybrid = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
         maxZoom: 20,
         attribution: '&copy; Google Satellite'
@@ -272,7 +271,6 @@ export default function App() {
       mapInstanceRef.current = map;
     }
 
-    const map = mapInstanceRef.current;
     const markers = markersLayerRef.current;
     const routes = routesLayerRef.current;
     const highlights = highlightLayerRef.current;
@@ -283,14 +281,20 @@ export default function App() {
 
     if (!dashboard) return;
 
-    // Group active jobs by truck in priority sequence order
-    const activeJobs = (dashboard.activeRequests || []).filter(
-      r => r.status === 'Approved' || r.status === 'InProgress' || r.status === 'Draft' || r.status === 'PendingInsurance'
+    const activeJobs = (dashboard.recentRequests || []).filter(
+      r =>
+        r.status === 'Approved' ||
+        r.status === 'InProgress' ||
+        r.status === 'Draft' ||
+        r.status === 'PendingInsurance'
     );
 
     // Draw Trucks
     dashboard.trucks?.forEach(t => {
       const isSelected = selectedMapTruckId === t.truckId;
+      const truckActiveJobs = (dashboard.priorityQueue || []).filter(
+        q => q.assignedTruckId === t.truckId
+      );
 
       if (isSelected) {
         // Pulsing Radar Highlight Ring around selected truck
@@ -305,23 +309,29 @@ export default function App() {
       }
 
       const color =
-        t.status === 'Available' ? '#10b981' : t.status === 'Busy' ? '#f59e0b' : '#ef4444';
+        t.fleetStatus === 'Available'
+          ? '#10b981'
+          : t.fleetStatus === 'Busy'
+          ? '#f59e0b'
+          : '#ef4444';
       const icon = L.divIcon({
         className: 'custom-div-icon',
         html: `<div style="background:${color};color:#fff;padding:5px 9px;border-radius:8px;font-weight:800;font-size:11px;border:2px solid ${
           isSelected ? '#38bdf8' : '#0f172a'
         };box-shadow:0 3px 10px rgba(0,0,0,0.45);white-space:nowrap;transform:${
           isSelected ? 'scale(1.12)' : 'scale(1)'
-        };">🚛 ${t.truckCode} ${t.activeJobCount > 0 ? `(${t.activeJobCount})` : ''}</div>`,
+        };">🚛 ${t.truckCode} ${
+          truckActiveJobs.length > 0 ? `(${truckActiveJobs.length})` : ''
+        }</div>`,
         iconSize: [96, 28],
         iconAnchor: [48, 14]
       });
 
       const marker = L.marker([t.currentLat, t.currentLng], { icon }).bindPopup(
         `<div style="min-width:190px">
-          <strong>🚛 ${t.truckCode} (${t.truckType})</strong><br/>
+          <strong>🚛 ${t.truckCode} (${t.licensePlate})</strong><br/>
           Driver: <b>${t.driverName}</b> (${t.driverPhone})<br/>
-          Status: <b>${t.status}</b> | Active Queue: <b>${t.activeJobCount}</b><br/>
+          Status: <b>${t.fleetStatus}</b> | Active Queue: <b>${truckActiveJobs.length}</b><br/>
           Base Salary: $${t.baseMonthlySalary} | OT: $${t.overtimeRatePerTow}/tow
         </div>`
       );
@@ -339,13 +349,16 @@ export default function App() {
       marker.addTo(markers);
     });
 
-    // Draw Active Jobs & OSRM Multi-Stop / Job Routes
+    // Draw Active Jobs & Routes
     activeJobs.forEach(r => {
-      const isJobSelected = selectedMapJobId === r.requestId;
+      const isJobSelected = selectedMapJobId === r.towRequestId;
       const isTruckSelected = selectedMapTruckId && r.assignedTruckId === selectedMapTruckId;
       const isHighlighted = isJobSelected || isTruckSelected;
 
-      const seqPrefix = r.queuePosition ? `${r.queuePosition}` : '';
+      const queueItem = (dashboard.priorityQueue || []).find(
+        q => q.towRequestId === r.towRequestId
+      );
+      const stopNum = queueItem ? queueItem.stopNumberInTruckQueue : null;
 
       // Pickup Pin
       const pIcon = L.divIcon({
@@ -355,29 +368,33 @@ export default function App() {
         };color:#fff;padding:3px 7px;border-radius:6px;font-size:10px;font-weight:800;border:2px solid ${
           isHighlighted ? '#fde047' : '#fff'
         };white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.35);">📍 ${
-          seqPrefix ? `${seqPrefix}P:` : ''
+          stopNum ? `${stopNum}P:` : ''
         } ${r.requestNumber.replace('TOW-2026-', '#')}</div>`,
-        iconSize: [84, 24],
-        iconAnchor: [42, 12]
+        iconSize: [86, 24],
+        iconAnchor: [43, 12]
       });
 
       const pMarker = L.marker([r.pickupLat, r.pickupLng], { icon: pIcon }).bindPopup(
         `<div style="min-width:200px">
           <strong>${r.requestNumber} (${r.status})</strong><br/>
-          Customer: <b>${r.callerName}</b> (${r.plateNumber})<br/>
+          Customer: <b>${r.customerName}</b> (${r.vehiclePlate})<br/>
           Pickup: ${r.pickupAddress}<br/>
-          Dropoff: ${r.dropoffAddress}<br/>
-          Distance: <b>${r.distanceKm} km</b> (Covered: ${r.coveredDistanceKm} km)<br/>
-          ${r.assignedTruckCode ? `Assigned Truck: <b>${r.assignedTruckCode}</b> (Stop #${r.queuePosition})` : 'Unassigned'}
+          Dropoff: ${r.destinationAddress}<br/>
+          Distance: <b>${r.actualDistanceKm} km</b> (Covered: ${r.allowedDistanceKm} km)<br/>
+          ${
+            r.truckCode
+              ? `Assigned Truck: <b>${r.truckCode}</b> ${stopNum ? `(Stop #${stopNum})` : ''}`
+              : 'Unassigned'
+          }
         </div>`
       );
 
       // Rule: Do NOT auto-open side menu when clicking a pin!
       pMarker.on('click', () => {
-        setSelectedMapJobId(r.requestId);
+        setSelectedMapJobId(r.towRequestId);
         if (drawerOpen) {
           setDrawerTab('jobs');
-          const el = drawerCardRefs.current[`job-${r.requestId}`];
+          const el = drawerCardRefs.current[`job-${r.towRequestId}`];
           if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
       });
@@ -387,24 +404,24 @@ export default function App() {
       const dIcon = L.divIcon({
         className: 'custom-div-icon',
         html: `<div style="background:#0f172a;color:#38bdf8;padding:2px 6px;border-radius:6px;font-size:10px;font-weight:700;border:1px solid #38bdf8;white-space:nowrap;">🏁 ${
-          seqPrefix ? `${seqPrefix}D:` : ''
+          stopNum ? `${stopNum}D:` : ''
         } ${r.requestNumber.replace('TOW-2026-', '#')}</div>`,
         iconSize: [78, 20],
         iconAnchor: [39, 10]
       });
-      L.marker([r.dropoffLat, r.dropoffLng], { icon: dIcon })
-        .bindPopup(`<strong>🏁 Dropoff (${r.requestNumber})</strong><br/>${r.dropoffAddress}`)
+      L.marker([r.destinationLat, r.destinationLng], { icon: dIcon })
+        .bindPopup(`<strong>🏁 Dropoff (${r.requestNumber})</strong><br/>${r.destinationAddress}`)
         .addTo(markers);
 
-      // Draw Route Polyline (Pickup -> Dropoff) using OSRM road geometry with straight-line fallback
+      // Draw Route Polyline (Pickup -> Dropoff) using OSRM driving route with fallback
       const drawJobRoute = async () => {
         let coords = [
           [r.pickupLat, r.pickupLng],
-          [r.dropoffLat, r.dropoffLng]
+          [r.destinationLat, r.destinationLng]
         ];
         try {
           const osrmRes = await fetch(
-            `${API_BASE}/osrm-route?coords=${r.pickupLng},${r.pickupLat};${r.dropoffLng},${r.dropoffLat}`
+            `https://router.project-osrm.org/route/v1/driving/${r.pickupLng},${r.pickupLat};${r.destinationLng},${r.destinationLat}?overview=full&geometries=geojson`
           );
           if (osrmRes.ok) {
             const osrmData = await osrmRes.json();
@@ -426,19 +443,19 @@ export default function App() {
 
         // Rule: Clicking on a route line highlights it on the map AND if the side menu is open, switches to & highlights the card in the side menu (without auto-opening if closed)
         poly.on('click', () => {
-          setSelectedMapJobId(r.requestId);
+          setSelectedMapJobId(r.towRequestId);
           if (r.assignedTruckId) setSelectedMapTruckId(r.assignedTruckId);
           if (drawerOpen) {
             setDrawerTab('jobs');
             setTimeout(() => {
-              const el = drawerCardRefs.current[`job-${r.requestId}`];
+              const el = drawerCardRefs.current[`job-${r.towRequestId}`];
               if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }, 80);
           }
         });
 
         poly.bindTooltip(
-          `${r.requestNumber}: ${r.pickupAddress} → ${r.dropoffAddress} (${r.distanceKm} km)`,
+          `${r.requestNumber}: ${r.pickupAddress} → ${r.destinationAddress} (${r.actualDistanceKm} km)`,
           { sticky: true }
         );
         poly.addTo(routesLayerRef.current);
@@ -529,8 +546,12 @@ export default function App() {
   // Open Built-in Location Picker Modal (Beirut default if empty)
   const openLocationPickerModal = async target => {
     const isPickup = target === 'pickup';
-    const initLat = isPickup ? intakeForm.pickupLat || BEIRUT_LAT : intakeForm.dropoffLat || BEIRUT_LAT;
-    const initLng = isPickup ? intakeForm.pickupLng || BEIRUT_LNG : intakeForm.dropoffLng || BEIRUT_LNG;
+    const initLat = isPickup
+      ? intakeForm.pickupLat || BEIRUT_LAT
+      : intakeForm.dropoffLat || BEIRUT_LAT;
+    const initLng = isPickup
+      ? intakeForm.pickupLng || BEIRUT_LNG
+      : intakeForm.dropoffLng || BEIRUT_LNG;
     const placeName = await reverseGeocodeLocality(initLat, initLng);
 
     setLocationPicker({
@@ -556,13 +577,20 @@ export default function App() {
     setLocationPicker(prev => ({ ...prev, searching: true }));
     try {
       const photonRes = await fetch(
-        `https://photon.komoot.io/api/?q=${encodeURIComponent(query + ' Lebanon')}&lat=${BEIRUT_LAT}&lon=${BEIRUT_LNG}&limit=5`
+        `https://photon.komoot.io/api/?q=${encodeURIComponent(
+          query + ' Lebanon'
+        )}&lat=${BEIRUT_LAT}&lon=${BEIRUT_LNG}&limit=5`
       );
       if (photonRes.ok) {
         const photonData = await photonRes.json();
         const items = (photonData.features || []).map(f => {
           const p = f.properties || {};
-          const labelParts = [p.name, p.street, p.city || p.locality || p.district, p.country].filter(Boolean);
+          const labelParts = [
+            p.name,
+            p.street,
+            p.city || p.locality || p.district,
+            p.country
+          ].filter(Boolean);
           return {
             name: [...new Set(labelParts)].join(', '),
             lat: Number(f.geometry.coordinates[1].toFixed(6)),
@@ -588,8 +616,8 @@ export default function App() {
         const nomData = await nomRes.json();
         const items = nomData.map(item => ({
           name: item.display_name.split(',').slice(0, 3).join(', '),
-          lat: Number( parseFloat(item.lat).toFixed(6) ),
-          lng: Number( parseFloat(item.lon).toFixed(6) )
+          lat: Number(parseFloat(item.lat).toFixed(6)),
+          lng: Number(parseFloat(item.lon).toFixed(6))
         }));
         setLocationPicker(prev => ({ ...prev, searchResults: items, searching: false }));
         return;
@@ -615,7 +643,6 @@ export default function App() {
       searchResults: []
     }));
 
-    // When explicitly picking from search autocomplete, update the address field too
     if (locationPicker.target === 'pickup') {
       setIntakeForm(prev => ({
         ...prev,
@@ -634,8 +661,7 @@ export default function App() {
   };
 
   // Confirm Pin in Location Picker Modal
-  // Rule: If user already typed a custom address name in the field, preserve their custom name!
-  // Only fill in the resolved locality name if the address field is empty.
+  // Rule: Preserve custom user-typed name if present; only fill resolved locality name if input is empty!
   const confirmPickedLocation = () => {
     const { target, lat, lng, resolvedPlaceName } = locationPicker;
     if (target === 'pickup') {
@@ -664,11 +690,40 @@ export default function App() {
 
   // Yeastar PBX Incoming Call Pop-up Simulation
   const triggerYeastarIncomingCall = () => {
+    const policies = dashboard?.policies || [];
     const sampleCallers = [
-      { phone: '+961 3 111 222', name: 'Rami Khoury', policyId: 1, vehicle: 'BMW X5 (Black)', plateCodeId: 2, digits: '149283' },
-      { phone: '+961 70 333 444', name: 'Nadine Haddad', policyId: 2, vehicle: 'Mercedes C300 (White)', plateCodeId: 1, digits: '882104' },
-      { phone: '+961 71 555 666', name: 'Karim Mansour (Accident Zero Policy)', policyId: 3, vehicle: 'Toyota Prado (Silver)', plateCodeId: 2, digits: '509112' },
-      { phone: '+961 3 999 888', name: 'Elie Geagea (Cooldown Test)', policyId: 4, vehicle: 'Porsche Macan (Blue)', plateCodeId: 5, digits: '774120' }
+      {
+        phone: policies[0]?.customerPhone || '+961-03-111222',
+        name: policies[0]?.customerName || 'Rami Khoury',
+        policyId: policies[0]?.policyId || 1,
+        vehicle: 'BMW X5 (Black)',
+        plateCodeId: 2,
+        digits: '149283'
+      },
+      {
+        phone: policies[1]?.customerPhone || '+961-70-222333',
+        name: policies[1]?.customerName || 'Nadine Haddad',
+        policyId: policies[1]?.policyId || 2,
+        vehicle: 'Mercedes C300 (White)',
+        plateCodeId: 1,
+        digits: '882104'
+      },
+      {
+        phone: policies[2]?.customerPhone || '+961-71-333444',
+        name: (policies[2]?.customerName || 'Karim Mansour') + ' (Zero Accident Quota Test)',
+        policyId: policies[2]?.policyId || 3,
+        vehicle: 'Toyota Prado (Silver)',
+        plateCodeId: 2,
+        digits: '509112'
+      },
+      {
+        phone: policies[3]?.customerPhone || '+961-03-444555',
+        name: (policies[3]?.customerName || 'Elie Geagea') + ' (Cooldown Test)',
+        policyId: policies[3]?.policyId || 4,
+        vehicle: 'Porsche Macan (Blue)',
+        plateCodeId: 3,
+        digits: '774120'
+      }
     ];
     const picked = sampleCallers[Math.floor(Math.random() * sampleCallers.length)];
     setYeastarCallModal(picked);
@@ -687,47 +742,53 @@ export default function App() {
     }));
     setYeastarCallModal(null);
     setActiveTab('intake');
-    showToast('success', '📞 Yeastar PBX Call Connected', `Auto-populated caller ${caller.name} (${caller.phone}) and matched Policy #${caller.policyId}.`);
+    showToast(
+      'success',
+      '📞 Yeastar PBX Call Connected',
+      `Auto-populated caller ${caller.name} (${caller.phone}) and matched Policy #${caller.policyId}.`
+    );
   };
 
   // Submit Call Intake
   const handleCreateTowRequest = async e => {
     e.preventDefault();
     if (!intakeForm.noPlate && (!intakeForm.plateCodeId || !intakeForm.plateDigits.trim())) {
-      showToast('error', 'Plate Letter & Digits Required', 'Please select a Lebanese Plate Letter and enter plate digits, or check "No Plate (Unregistered)".');
+      showToast(
+        'error',
+        'Plate Letter & Digits Required',
+        'Please select a Lebanese Plate Letter and enter plate digits, or check "No Plate (Unregistered)".'
+      );
       return;
     }
 
-    const plateCodeObj = dashboard?.plateCodes?.find(
-      p => p.plateCodeId === Number(intakeForm.plateCodeId)
-    );
-    const fullPlate = intakeForm.noPlate
-      ? 'NO-PLATE'
-      : `${plateCodeObj?.codeLetter || 'G'}-${intakeForm.plateDigits}`;
+    const policyObj = dashboard?.policies?.find(p => p.policyId === Number(selectedPolicyId));
 
     try {
       const res = await fetch(`${API_BASE}/tow-requests`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          policyId: Number(selectedPolicyId),
-          callerName: intakeForm.callerName,
+          customerId: policyObj?.customerId || 1,
           callerPhone: intakeForm.callerPhone,
-          vehicleDesc: intakeForm.vehicleDesc,
           plateCodeId: intakeForm.noPlate ? null : Number(intakeForm.plateCodeId),
-          plateNumber: fullPlate,
+          plateDigits: intakeForm.noPlate ? null : intakeForm.plateDigits.trim(),
           noPlate: intakeForm.noPlate,
-          incidentType: selectedIncidentType,
+          vehicleModel: intakeForm.vehicleDesc,
+          issueType: selectedIncidentType,
+          issueNotes: intakeForm.notes,
           pickupAddress: intakeForm.pickupAddress,
           pickupLat: Number(intakeForm.pickupLat),
           pickupLng: Number(intakeForm.pickupLng),
-          dropoffAddress: intakeForm.dropoffAddress,
-          dropoffLat: Number(intakeForm.dropoffLat),
-          dropoffLng: Number(intakeForm.dropoffLng),
+          destinationAddress: intakeForm.dropoffAddress,
+          destinationLat: Number(intakeForm.dropoffLat),
+          destinationLng: Number(intakeForm.dropoffLng),
+          hasInsurance: true,
+          policyId: Number(selectedPolicyId),
           isOutsourced: intakeForm.isOutsourced,
           subcontractorName: intakeForm.isOutsourced ? intakeForm.subcontractorName : null,
           subcontractorFee: intakeForm.isOutsourced ? Number(intakeForm.subcontractorFee) : 0,
-          notes: intakeForm.notes
+          assignedTruckId: null,
+          autoApprove: false
         })
       });
       const data = await res.json();
@@ -735,8 +796,8 @@ export default function App() {
 
       showToast(
         'success',
-        `Created ${data.requestNumber} (${data.initialStatus})`,
-        `Distance: ${data.distanceKm} km | Overage: ${data.overageKm} km | Customer Extra Charge: $${data.extraCharge}`
+        `Created ${data.data?.requestNumber || 'Ticket'} (${data.data?.status || 'Draft'})`,
+        data.message
       );
       await fetchDashboard();
       setActiveTab('queue');
@@ -754,13 +815,14 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          codeLetter: newPlateLetter.trim().toUpperCase(),
-          categoryName: newPlateCategory
+          code: newPlateLetter.trim().toUpperCase(),
+          regionDescription: newPlateCategory,
+          displaySequence: (dashboard?.plateCodes?.length || 10) + 1
         })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to add plate letter');
-      showToast('success', 'Plate Letter Saved', `Added Lebanese plate code '${data.codeLetter}' (${data.categoryName}).`);
+      showToast('success', 'Plate Letter Saved', data.message);
       setNewPlateLetter('');
       setShowPlateModal(false);
       await fetchDashboard();
@@ -769,13 +831,20 @@ export default function App() {
     }
   };
 
-  // Update Policy Quota Tier (Sequence, AllowedTows, MaxDistanceKm, MinIntervalDays cooldown)
+  // Update Policy Quota Tier (TierSequence, AllowedTows, MaxDistanceKm, MinIntervalDays cooldown)
   const handleUpdateTier = async tier => {
     try {
-      const res = await fetch(`${API_BASE}/quota-tiers/${tier.tierId}`, {
+      const res = await fetch(`${API_BASE}/quota-tiers/${tier.quotaTierId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(tier)
+        body: JSON.stringify({
+          tierSequence: tier.tierSequence,
+          coverageType: tier.coverageType,
+          allowedTows: tier.allowedTows,
+          usedTows: tier.usedTows,
+          maxDistanceKm: tier.maxDistanceKm,
+          minIntervalDays: tier.minIntervalDays
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to update policy quota tier');
@@ -808,24 +877,26 @@ export default function App() {
   };
 
   // Approve & Dispatch to Truck
-  const handleDispatchTruck = async requestId => {
+  const handleDispatchTruck = async towRequestId => {
     const truckId =
-      selectedTruckByReq[requestId] ||
-      dashboard?.trucks?.find(t => t.status === 'Available')?.truckId ||
+      selectedTruckByReq[towRequestId] ||
+      dashboard?.trucks?.find(t => t.fleetStatus === 'Available')?.truckId ||
       1;
     try {
-      const res = await fetch(`${API_BASE}/tow-requests/${requestId}/dispatch`, {
+      const res = await fetch(`${API_BASE}/tow-requests/${towRequestId}/dispatch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          truckId: Number(truckId),
-          dispatcherUser: 'Dispatcher_Main_UI',
-          overrideReason: 'Approved & Dispatched from CAD Queue'
+          assignedTruckId: Number(truckId)
         })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Dispatch failed');
-      showToast('success', 'Truck Dispatched (ACID Transaction)', data.message);
+      showToast(
+        'success',
+        `Dispatched ${data.requestNumber || ''}`,
+        `Assigned Truck #${data.assignedTruckId} (Stop #${data.truckPrioritySequence})`
+      );
       await fetchDashboard();
     } catch (err) {
       showToast('error', 'Dispatch Blocked by SQL Server', err.message);
@@ -833,16 +904,15 @@ export default function App() {
   };
 
   // Update Lifecycle Status
-  const handleLifecycleChange = async (requestId, newStatus) => {
+  const handleLifecycleChange = async (towRequestId, newStatus) => {
     try {
-      const res = await fetch(`${API_BASE}/tow-requests/${requestId}/status`, {
+      const res = await fetch(`${API_BASE}/tow-requests/${towRequestId}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           newStatus,
-          dispatcherUser: 'Dispatcher_Main_UI',
           cashCollected: newStatus === 'Done' ? 15.0 : 0.0,
-          notes: `Transitioned to ${newStatus}`
+          rejectionReason: newStatus === 'Rejected' ? 'Rejected by Dispatcher' : null
         })
       });
       const data = await res.json();
@@ -854,17 +924,39 @@ export default function App() {
     }
   };
 
+  // Test Immutability Trigger on Locked Ticket
+  const handleTestTriggerLock = async towRequestId => {
+    try {
+      const res = await fetch(
+        `${API_BASE}/tow-requests/${towRequestId}/test-immutability-trigger`,
+        { method: 'POST' }
+      );
+      const data = await res.json();
+      if (data.blockedByTrigger) {
+        showToast(
+          'error',
+          `🔒 SQL Trigger Blocked Undo (Err ${data.sqlErrorNumber})`,
+          data.triggerMessage
+        );
+      } else {
+        showToast('success', 'Trigger Test', data.message);
+      }
+    } catch (err) {
+      showToast('error', 'Trigger Test Error', err.message);
+    }
+  };
+
   // Reorder Truck Priority Queue (Earlier / Later)
-  const handleReorderQueue = async (truckId, requestId, direction) => {
+  const handleReorderQueue = async (truckId, towRequestId, direction) => {
     try {
       const res = await fetch(`${API_BASE}/trucks/${truckId}/reorder-queue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId, direction })
+        body: JSON.stringify({ towRequestId, direction })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Queue reorder failed');
-      showToast('success', 'Stop Priority Updated', data.message);
+      showToast('success', 'Stop Priority Updated', `Reordered job ${direction.toUpperCase()} in truck queue.`);
       await fetchDashboard();
     } catch (err) {
       showToast('error', 'Reorder Error', err.message);
@@ -873,14 +965,12 @@ export default function App() {
 
   // Concurrency Race Simulator
   const handleSimulateConcurrencyRace = async () => {
-    if (!concurrencyTargetId) return;
     setConcurrencyRunning(true);
     setConcurrencyResult(null);
     try {
-      const res = await fetch(
-        `${API_BASE}/concurrency/simulate-double-dispatch/${concurrencyTargetId}`,
-        { method: 'POST' }
-      );
+      const res = await fetch(`${API_BASE}/concurrency/simulate-race`, {
+        method: 'POST'
+      });
       const data = await res.json();
       setConcurrencyResult(data);
       await fetchDashboard();
@@ -894,14 +984,14 @@ export default function App() {
   // Optimistic ROWVERSION Update Test
   const handleOptimisticUpdate = async (reqObj, forceStaleToken = false) => {
     try {
-      const tokenToSend = forceStaleToken ? '0000000000000001' : reqObj.rowVersionHex;
-      const res = await fetch(`${API_BASE}/tow-requests/${reqObj.requestId}/optimistic-edit`, {
+      const tokenToSend = forceStaleToken ? '0x0000000000000001' : reqObj.rowVerHex;
+      const res = await fetch(`${API_BASE}/tow-requests/${reqObj.towRequestId}/optimistic-edit`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          newPickupAddress: reqObj.pickupAddress,
-          newNotes: optimisticNote,
-          rowVersionHex: tokenToSend
+          issueType: reqObj.issueType,
+          issueNotes: optimisticNote,
+          expectedRowVerHex: tokenToSend
         })
       });
       const data = await res.json();
@@ -910,7 +1000,7 @@ export default function App() {
         showToast('success', 'Optimistic Update Succeeded', data.message);
         await fetchDashboard();
       } else {
-        showToast('error', 'HTTP 409 Optimistic Concurrency Conflict', data.error);
+        showToast('error', 'HTTP 400/409 Optimistic Concurrency Conflict', data.error);
       }
     } catch (err) {
       showToast('error', 'Optimistic Update Error', err.message);
@@ -918,15 +1008,16 @@ export default function App() {
   };
 
   // >120k Rows Performance Search
-  const runPerformanceQuery = async overridePlate => {
+  const runPerformanceQuery = async (overrideMode, overridePlate) => {
     setPerfLoading(true);
+    const modeVal = overrideMode || perfMode;
     const plateVal = overridePlate !== undefined ? overridePlate : perfPlate;
     try {
-      const url = `${API_BASE}/analytics/performance-search?status=${encodeURIComponent(
-        perfStatus
-      )}&startDate=${encodeURIComponent(perfStart)}&endDate=${encodeURIComponent(
-        perfEnd
-      )}&plateNumber=${encodeURIComponent(plateVal)}`;
+      const url = `${API_BASE}/performance/search?mode=${encodeURIComponent(
+        modeVal
+      )}&status=${encodeURIComponent(perfStatus)}&startDate=${encodeURIComponent(
+        perfStart
+      )}&endDate=${encodeURIComponent(perfEnd)}&vehiclePlate=${encodeURIComponent(plateVal)}`;
       const res = await fetch(url);
       const data = await res.json();
       setPerfResult(data);
@@ -939,7 +1030,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === 'performance' && !perfResult) {
-      runPerformanceQuery('');
+      runPerformanceQuery('date_status', perfPlate);
     }
   }, [activeTab]);
 
@@ -948,18 +1039,20 @@ export default function App() {
       <div className="loading-screen">
         <div className="spinner"></div>
         <h2>Connecting to SQL Server (GIN401_TowDispatch)...</h2>
-        <p>Verifying 120,000+ rows in dbo.TowRequests & least-privilege role...</p>
+        <p>Verifying 120,000+ rows in dbo.TowRequests &amp; least-privilege role...</p>
       </div>
     );
   }
 
-  const stats = dashboard?.stats || {};
+  const kpis = dashboard?.kpis || {};
   const selectedPolicyObj = dashboard?.policies?.find(p => p.policyId === Number(selectedPolicyId));
-  const selectedPolicyTiers = (dashboard?.quotaTiers || []).filter(
-    t => t.policyId === Number(selectedPolicyId)
-  );
-  const ongoingJobs = (dashboard?.activeRequests || []).filter(
-    r => r.status === 'Draft' || r.status === 'PendingInsurance' || r.status === 'Approved' || r.status === 'InProgress'
+  const selectedPolicyTiers = selectedPolicyObj?.tiers || [];
+  const ongoingJobs = (dashboard?.recentRequests || []).filter(
+    r =>
+      r.status === 'Draft' ||
+      r.status === 'PendingInsurance' ||
+      r.status === 'Approved' ||
+      r.status === 'InProgress'
   );
 
   return (
@@ -969,11 +1062,11 @@ export default function App() {
         <div className="brand">
           <span className="brand-icon">🚨</span>
           <div>
-            <h1>GIN401 — Roadside Assistance, Insurance Quota & Towing CAD</h1>
+            <h1>GIN401 — Roadside Assistance, Insurance Quota &amp; Towing CAD</h1>
             <p className="subtitle">
               Standalone C# (.NET 9 ADO.NET) + React + SQL Server •{' '}
-              <strong>{stats.totalRowsInTowRequests?.toLocaleString()} Rows</strong> in{' '}
-              <code>dbo.TowRequests</code>
+              <strong>{kpis.totalTowRequests?.toLocaleString()} Rows</strong> in{' '}
+              <code>dbo.TowRequests</code> • Login: <code>{kpis.connectedSqlLogin}</code>
             </p>
           </div>
         </div>
@@ -984,15 +1077,17 @@ export default function App() {
           </button>
           <div className="kpi-pill">
             <span>Total DB Rows</span>
-            <strong>{stats.totalRowsInTowRequests?.toLocaleString()}</strong>
+            <strong>{kpis.totalTowRequests?.toLocaleString()}</strong>
           </div>
           <div className="kpi-pill">
             <span>Active Queue</span>
-            <strong className="text-amber">{stats.activeQueueCount}</strong>
+            <strong className="text-amber">
+              {(kpis.activeDispatches || 0) + (kpis.pendingDrafts || 0)}
+            </strong>
           </div>
           <div className="kpi-pill">
             <span>Available Trucks</span>
-            <strong className="text-green">{stats.availableTrucks}</strong>
+            <strong className="text-green">{kpis.availableTrucks}</strong>
           </div>
         </div>
       </header>
@@ -1003,25 +1098,25 @@ export default function App() {
           className={activeTab === 'map' ? 'tab-btn active' : 'tab-btn'}
           onClick={() => setActiveTab('map')}
         >
-          🗺️ 1. Live CAD Map & Fleet Queue
+          🗺️ 1. Live CAD Map &amp; Fleet Queue
         </button>
         <button
           className={activeTab === 'intake' ? 'tab-btn active' : 'tab-btn'}
           onClick={() => setActiveTab('intake')}
         >
-          📞 2. Call Intake, Location Picker & Policy Quotas
+          📞 2. Call Intake, Location Picker &amp; Policy Quotas
         </button>
         <button
           className={activeTab === 'queue' ? 'tab-btn active' : 'tab-btn'}
           onClick={() => setActiveTab('queue')}
         >
-          📋 3. Kanban Board, Dispatch & Driver Payroll
+          📋 3. Kanban Board, Dispatch &amp; Driver Payroll
         </button>
         <button
           className={activeTab === 'concurrency' ? 'tab-btn active' : 'tab-btn'}
           onClick={() => setActiveTab('concurrency')}
         >
-          ⚡ 4. Concurrency Lab (UPDLOCK & ROWVERSION)
+          ⚡ 4. Concurrency Lab (UPDLOCK &amp; ROWVERSION)
         </button>
         <button
           className={activeTab === 'performance' ? 'tab-btn active' : 'tab-btn'}
@@ -1054,7 +1149,10 @@ export default function App() {
               Vehicle: <strong>{yeastarCallModal.vehicle}</strong>
             </p>
             <div className="modal-actions">
-              <button className="btn-primary" onClick={() => acceptYeastarCall(yeastarCallModal)}>
+              <button
+                className="btn-primary"
+                onClick={() => acceptYeastarCall(yeastarCallModal)}
+              >
                 ✅ Answer &amp; Auto-Fill Call Intake
               </button>
               <button className="btn-secondary" onClick={() => setYeastarCallModal(null)}>
@@ -1160,8 +1258,8 @@ export default function App() {
           <div className="modal-box">
             <h3>⚙️ Add New Lebanese Plate Letter</h3>
             <p className="muted">
-              Add new plate letters (e.g. <code>Y</code>, <code>R</code>, <code>C</code>) directly to{' '}
-              <code>dbo.PlateCodes</code>.
+              Add new plate letters (e.g. <code>Y</code>, <code>R</code>, <code>C</code>) directly
+              to <code>dbo.PlateCodes</code>.
             </p>
             <form onSubmit={handleAddPlateCode} className="intake-form">
               <div className="form-row">
@@ -1176,7 +1274,7 @@ export default function App() {
                 />
               </div>
               <div className="form-row">
-                <label>Category Description</label>
+                <label>Category / Region Description</label>
                 <input
                   type="text"
                   value={newPlateCategory}
@@ -1206,7 +1304,6 @@ export default function App() {
         {/* TAB 1: LIVE CAD MAP & FLEET PRIORITY QUEUE */}
         {activeTab === 'map' && (
           <div className="cad-map-fullscreen-wrapper">
-            {/* Top Map Controls Bar */}
             <div className="cad-map-topbar">
               <div className="cad-map-topbar-left">
                 <span className="badge badge-InProgress">🗺️ Google Maps CAD Engine</span>
@@ -1229,7 +1326,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* Floating Button on the Right to Open/Close Fleet & Jobs Drawer */}
               <button
                 className="btn-fleet-drawer-toggle"
                 onClick={() => setDrawerOpen(prev => !prev)}
@@ -1265,13 +1361,9 @@ export default function App() {
                     <div className="drawer-list">
                       {dashboard?.trucks?.map(t => {
                         const isSelected = selectedMapTruckId === t.truckId;
-                        const truckJobs = (dashboard?.activeRequests || [])
-                          .filter(
-                            r =>
-                              r.assignedTruckId === t.truckId &&
-                              (r.status === 'Approved' || r.status === 'InProgress')
-                          )
-                          .sort((a, b) => a.queuePosition - b.queuePosition);
+                        const truckJobs = (dashboard?.priorityQueue || []).filter(
+                          q => q.assignedTruckId === t.truckId
+                        );
 
                         return (
                           <div
@@ -1287,25 +1379,33 @@ export default function App() {
                           >
                             <div className="truck-card-top">
                               <strong>
-                                🚛 {t.truckCode} ({t.truckType})
+                                🚛 {t.truckCode} ({t.licensePlate})
                               </strong>
-                              <span className={`badge badge-${t.status}`}>{t.status}</span>
+                              <span className={`badge badge-${t.fleetStatus}`}>
+                                {t.fleetStatus}
+                              </span>
                             </div>
                             <div className="truck-card-body">
                               <div>
                                 Driver: <strong>{t.driverName}</strong> ({t.driverPhone})
                               </div>
                               <div>
-                                Active Queue: <strong>{t.activeJobCount} jobs</strong> | Completed:{' '}
-                                <strong>{t.completedTodayCount}</strong>
+                                Active Queue: <strong>{truckJobs.length} stops</strong> | Salary: $
+                                {t.baseMonthlySalary}
                               </div>
-                              <div className="truck-action-row" onClick={e => e.stopPropagation()}>
+                              <div
+                                className="truck-action-row"
+                                onClick={e => e.stopPropagation()}
+                              >
                                 <button
                                   className="btn-xs"
                                   onClick={() => {
                                     setSelectedMapTruckId(t.truckId);
                                     if (mapInstanceRef.current) {
-                                      mapInstanceRef.current.flyTo([t.currentLat, t.currentLng], 14);
+                                      mapInstanceRef.current.flyTo(
+                                        [t.currentLat, t.currentLng],
+                                        14
+                                      );
                                     }
                                   }}
                                 >
@@ -1334,12 +1434,14 @@ export default function App() {
                                     <p className="muted">No active jobs assigned to this truck.</p>
                                   ) : (
                                     truckJobs.map((job, idx) => (
-                                      <div key={job.requestId} className="stop-queue-item">
+                                      <div key={job.towRequestId} className="stop-queue-item">
                                         <div>
-                                          <span className="seq-badge">#{idx + 1}</span>{' '}
-                                          <strong>{job.requestNumber}</strong> ({job.callerName})
+                                          <span className="seq-badge">
+                                            #{job.stopNumberInTruckQueue}
+                                          </span>{' '}
+                                          <strong>{job.requestNumber}</strong> ({job.vehiclePlate})
                                           <div className="muted">
-                                            📍 {job.pickupAddress} → 🏁 {job.dropoffAddress}
+                                            📍 {job.pickupAddress} → 🏁 {job.destinationAddress}
                                           </div>
                                         </div>
                                         <div className="reorder-btns">
@@ -1348,7 +1450,7 @@ export default function App() {
                                             disabled={idx === 0}
                                             title="Move Earlier"
                                             onClick={() =>
-                                              handleReorderQueue(t.truckId, job.requestId, 'UP')
+                                              handleReorderQueue(t.truckId, job.towRequestId, 'up')
                                             }
                                           >
                                             ▲
@@ -1358,7 +1460,11 @@ export default function App() {
                                             disabled={idx === truckJobs.length - 1}
                                             title="Move Later"
                                             onClick={() =>
-                                              handleReorderQueue(t.truckId, job.requestId, 'DOWN')
+                                              handleReorderQueue(
+                                                t.truckId,
+                                                job.towRequestId,
+                                                'down'
+                                              )
                                             }
                                           >
                                             ▼
@@ -1380,14 +1486,14 @@ export default function App() {
                   {drawerTab === 'jobs' && (
                     <div className="drawer-list">
                       {ongoingJobs.map(r => {
-                        const isSelected = selectedMapJobId === r.requestId;
+                        const isSelected = selectedMapJobId === r.towRequestId;
                         return (
                           <div
-                            key={r.requestId}
-                            ref={el => (drawerCardRefs.current[`job-${r.requestId}`] = el)}
+                            key={r.towRequestId}
+                            ref={el => (drawerCardRefs.current[`job-${r.towRequestId}`] = el)}
                             className={`truck-card ${isSelected ? 'card-highlighted' : ''}`}
                             onClick={() => {
-                              setSelectedMapJobId(r.requestId);
+                              setSelectedMapJobId(r.towRequestId);
                               if (mapInstanceRef.current) {
                                 mapInstanceRef.current.flyTo([r.pickupLat, r.pickupLng], 13);
                               }
@@ -1399,21 +1505,22 @@ export default function App() {
                             </div>
                             <div className="truck-card-body">
                               <div>
-                                <strong>{r.callerName}</strong> • <code>{r.plateNumber}</code> (
-                                {r.incidentType})
+                                <strong>{r.customerName}</strong> • <code>{r.vehiclePlate}</code> (
+                                {r.issueType})
                               </div>
                               <div>📍 {r.pickupAddress}</div>
-                              <div>🏁 {r.dropoffAddress}</div>
+                              <div>🏁 {r.destinationAddress}</div>
                               <div>
-                                Distance: <strong>{r.distanceKm} km</strong> | Extra:{' '}
-                                <strong className={r.extraCharge > 0 ? 'text-red' : 'text-green'}>
-                                  ${r.extraCharge}
+                                Distance: <strong>{r.actualDistanceKm} km</strong> | Extra:{' '}
+                                <strong
+                                  className={r.overageAmount > 0 ? 'text-red' : 'text-green'}
+                                >
+                                  ${r.overageAmount}
                                 </strong>
                               </div>
-                              {r.assignedTruckCode && (
+                              {r.truckCode && (
                                 <div className="text-amber">
-                                  🚛 Assigned: <strong>{r.assignedTruckCode}</strong> (Stop #
-                                  {r.queuePosition})
+                                  🚛 Assigned: <strong>{r.truckCode}</strong>
                                 </div>
                               )}
                             </div>
@@ -1461,7 +1568,7 @@ export default function App() {
                   >
                     {dashboard?.policies?.map(p => (
                       <option key={p.policyId} value={p.policyId}>
-                        {p.policyNumber} — {p.customerName} ({p.providerCode} • {p.planName})
+                        {p.policyNumber} — {p.customerName} ({p.providerName} • {p.policyStatus})
                       </option>
                     ))}
                   </select>
@@ -1481,7 +1588,7 @@ export default function App() {
                       <option value="Accident">💥 Accident Tow</option>
                       <option value="Winch">🏗️ Winch / Off-Road Recovery</option>
                       <option value="FlatTire">🛞 Flat Tire</option>
-                      <option value="BatteryJump">🔋 Battery Jump</option>
+                      <option value="Battery">🔋 Battery Jump</option>
                     </select>
                   </div>
                   <div>
@@ -1541,12 +1648,12 @@ export default function App() {
                           onChange={e =>
                             setIntakeForm({ ...intakeForm, plateCodeId: e.target.value })
                           }
-                          style={{ maxWidth: '145px' }}
+                          style={{ maxWidth: '150px' }}
                           required
                         >
                           {dashboard?.plateCodes?.map(pc => (
                             <option key={pc.plateCodeId} value={pc.plateCodeId}>
-                              {pc.codeLetter} ({pc.categoryName.split('/')[0].trim()})
+                              {pc.code} ({pc.regionDescription.split('/')[0].trim()})
                             </option>
                           ))}
                         </select>
@@ -1681,7 +1788,7 @@ export default function App() {
                 <div>
                   <h3>🛡️ Live Policy Quota &amp; Cooldown Evaluation</h3>
                   <p className="muted">
-                    Evaluated by <code>dbo.tvf_CheckPolicyEligibility</code> &amp;{' '}
+                    Evaluated by <code>dbo.tvf_CheckPolicyEligibility</code> &amp; OSRM /{' '}
                     <code>dbo.fn_CalculateRoadDistanceKm</code>
                   </p>
                 </div>
@@ -1706,49 +1813,43 @@ export default function App() {
                         ? '✅ POLICY ELIGIBLE FOR COVERAGE'
                         : '⚠️ POLICY QUOTA / COOLDOWN BLOCKED'}
                     </h4>
-                    <p>{eligibility.rejectionReason}</p>
+                    <p>{eligibility.statusBanner}</p>
                   </div>
 
                   <div className="elig-metrics">
                     <div className="metric-item">
                       <span>Matched Tier</span>
-                      <strong>
-                        #{eligibility.matchedTierSequence} ({eligibility.matchedTierName})
-                      </strong>
+                      <strong>{eligibility.matchedTierName || 'None'}</strong>
                     </div>
                     <div className="metric-item">
-                      <span>Calculated Distance</span>
-                      <strong>{eligibility.calculatedDistanceKm} km</strong>
+                      <span>Road Distance (OSRM/SQL)</span>
+                      <strong>{eligibility.calculatedRoadKm} km</strong>
                     </div>
                     <div className="metric-item">
                       <span>Covered Distance</span>
-                      <strong>{eligibility.coveredDistanceKm} km</strong>
+                      <strong>{eligibility.allowedDistanceKm} km</strong>
                     </div>
                     <div className="metric-item">
                       <span>Overage Extra Charge</span>
                       <strong
-                        className={eligibility.extraCharge > 0 ? 'text-red' : 'text-green'}
+                        className={eligibility.overageAmount > 0 ? 'text-red' : 'text-green'}
                       >
-                        ${eligibility.extraCharge} ({eligibility.overageKm} km over)
+                        ${eligibility.overageAmount} ({eligibility.overageKm} km over)
                       </strong>
                     </div>
                     <div className="metric-item">
-                      <span>Remaining Mechanical</span>
-                      <strong>{eligibility.remainingMechanical} tows</strong>
-                    </div>
-                    <div className="metric-item">
-                      <span>Remaining Accident</span>
+                      <span>Remaining ({eligibility.targetCategory})</span>
                       <strong
                         className={
-                          eligibility.remainingAccident === 0 ? 'text-red' : 'text-green'
+                          eligibility.remainingCategoryTows <= 0 ? 'text-red' : 'text-green'
                         }
                       >
-                        {eligibility.remainingAccident} tows
+                        {eligibility.remainingCategoryTows} tows
                       </strong>
                     </div>
                     <div className="metric-item">
                       <span>Days Since Last Tow</span>
-                      <strong>{eligibility.daysSinceLastTow} days</strong>
+                      <strong>{eligibility.daysSinceLastTow ?? 'No prior'} days</strong>
                     </div>
                     <div className="metric-item">
                       <span>Required Cooldown</span>
@@ -1763,8 +1864,7 @@ export default function App() {
               {/* Sequential Policy Quota Tiers Table & Cooldown Editor */}
               <div className="tiers-section">
                 <h4>
-                  📑 Sequential Quota Tiers for{' '}
-                  <code>{selectedPolicyObj?.policyNumber}</code>
+                  📑 Sequential Quota Tiers for <code>{selectedPolicyObj?.policyNumber}</code>
                 </h4>
                 <p className="muted">
                   Configure allowed tows, max covered distance (km), and{' '}
@@ -1775,30 +1875,38 @@ export default function App() {
                     <tr>
                       <th>Seq</th>
                       <th>Coverage Type</th>
-                      <th>Allowed Tows</th>
+                      <th>Used / Allowed</th>
+                      <th>Remaining</th>
                       <th>Max Dist (km)</th>
                       <th>Cooldown (Days)</th>
-                      <th>CoPay %</th>
                       {showTierEditor && <th>Edit</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {selectedPolicyTiers.map(tier => (
-                      <tr key={tier.tierId}>
+                      <tr key={tier.quotaTierId}>
                         <td>
-                          <span className="seq-badge">#{tier.sequenceOrder}</span>
+                          <span className="seq-badge">#{tier.tierSequence}</span>
                         </td>
                         <td>
                           <strong>{tier.coverageType}</strong>
                         </td>
-                        <td>{tier.allowedTows}</td>
+                        <td>
+                          {tier.usedTows} / {tier.allowedTows}
+                        </td>
+                        <td>
+                          <strong
+                            className={tier.remainingTows <= 0 ? 'text-red' : 'text-green'}
+                          >
+                            {tier.remainingTows}
+                          </strong>
+                        </td>
                         <td>{tier.maxDistanceKm} km</td>
                         <td>
                           <span className="badge badge-PendingInsurance">
                             ⏱️ {tier.minIntervalDays} days
                           </span>
                         </td>
-                        <td>{tier.coPayPercentage}%</td>
                         {showTierEditor && (
                           <td>
                             <button
@@ -1818,7 +1926,7 @@ export default function App() {
                 {editingTier && (
                   <div className="tier-edit-box">
                     <h5>
-                      ✏️ Edit Tier #{editingTier.sequenceOrder} ({editingTier.coverageType})
+                      ✏️ Edit Tier #{editingTier.tierSequence} ({editingTier.coverageType})
                     </h5>
                     <div className="form-row-3">
                       <div>
@@ -1868,10 +1976,7 @@ export default function App() {
                       >
                         💾 Save Tier Rule
                       </button>
-                      <button
-                        className="btn-secondary"
-                        onClick={() => setEditingTier(null)}
-                      >
+                      <button className="btn-secondary" onClick={() => setEditingTier(null)}>
                         Cancel
                       </button>
                     </div>
@@ -1887,11 +1992,11 @@ export default function App() {
                         <label>Sequence #</label>
                         <input
                           type="number"
-                          value={newTierForm.sequenceOrder}
+                          value={newTierForm.tierSequence}
                           onChange={e =>
                             setNewTierForm({
                               ...newTierForm,
-                              sequenceOrder: Number(e.target.value)
+                              tierSequence: Number(e.target.value)
                             })
                           }
                         />
@@ -1927,11 +2032,7 @@ export default function App() {
                         />
                       </div>
                     </div>
-                    <button
-                      type="submit"
-                      className="btn-xs"
-                      style={{ marginTop: '8px' }}
-                    >
+                    <button type="submit" className="btn-xs" style={{ marginTop: '8px' }}>
                       ➕ Add Sequential Tier
                     </button>
                   </form>
@@ -1984,7 +2085,7 @@ export default function App() {
             {queueViewMode === 'kanban' && (
               <div className="kanban-board">
                 {KANBAN_STAGES.map(stage => {
-                  const stageCards = (dashboard?.activeRequests || []).filter(
+                  const stageCards = (dashboard?.recentRequests || []).filter(
                     r => r.status === stage.key
                   );
                   return (
@@ -1998,29 +2099,27 @@ export default function App() {
                       </div>
                       <div className="kanban-col-cards">
                         {stageCards.map(r => (
-                          <div key={r.requestId} className="kanban-card">
+                          <div key={r.towRequestId} className="kanban-card">
                             <div className="kanban-card-top">
                               <strong>{r.requestNumber}</strong>
-                              <code>{r.plateNumber}</code>
+                              <code>{r.vehiclePlate}</code>
                             </div>
                             <div className="kanban-card-body">
                               <div>
-                                <strong>{r.callerName}</strong> ({r.incidentType})
+                                <strong>{r.customerName}</strong> ({r.issueType})
                               </div>
                               <div className="muted">📍 {r.pickupAddress}</div>
-                              <div className="muted">🏁 {r.dropoffAddress}</div>
+                              <div className="muted">🏁 {r.destinationAddress}</div>
                               <div>
-                                Dist: <strong>{r.distanceKm} km</strong> | Extra:{' '}
+                                Dist: <strong>{r.actualDistanceKm} km</strong> | Extra:{' '}
                                 <strong
-                                  className={r.extraCharge > 0 ? 'text-red' : 'text-green'}
+                                  className={r.overageAmount > 0 ? 'text-red' : 'text-green'}
                                 >
-                                  ${r.extraCharge}
+                                  ${r.overageAmount}
                                 </strong>
                               </div>
-                              {r.assignedTruckCode && (
-                                <div className="text-amber">
-                                  🚛 {r.assignedTruckCode} (Stop #{r.queuePosition})
-                                </div>
+                              {r.truckCode && (
+                                <div className="text-amber">🚛 {r.truckCode}</div>
                               )}
                             </div>
 
@@ -2030,24 +2129,24 @@ export default function App() {
                                 <>
                                   <select
                                     className="truck-select"
-                                    value={selectedTruckByReq[r.requestId] || 1}
+                                    value={selectedTruckByReq[r.towRequestId] || 1}
                                     onChange={e =>
                                       setSelectedTruckByReq({
                                         ...selectedTruckByReq,
-                                        [r.requestId]: e.target.value
+                                        [r.towRequestId]: e.target.value
                                       })
                                     }
                                   >
                                     {dashboard?.trucks?.map(t => (
                                       <option key={t.truckId} value={t.truckId}>
-                                        {t.truckCode} ({t.status})
+                                        {t.truckCode} ({t.fleetStatus})
                                       </option>
                                     ))}
                                   </select>
                                   <div className="action-btn-group">
                                     <button
                                       className="btn-xs btn-approve"
-                                      onClick={() => handleDispatchTruck(r.requestId)}
+                                      onClick={() => handleDispatchTruck(r.towRequestId)}
                                     >
                                       🚛 Approve &amp; Dispatch
                                     </button>
@@ -2056,7 +2155,7 @@ export default function App() {
                                         className="btn-xs"
                                         onClick={() =>
                                           handleLifecycleChange(
-                                            r.requestId,
+                                            r.towRequestId,
                                             'PendingInsurance'
                                           )
                                         }
@@ -2067,7 +2166,7 @@ export default function App() {
                                     <button
                                       className="btn-xs btn-reject"
                                       onClick={() =>
-                                        handleLifecycleChange(r.requestId, 'Rejected')
+                                        handleLifecycleChange(r.towRequestId, 'Rejected')
                                       }
                                     >
                                       ✕ Reject
@@ -2080,7 +2179,7 @@ export default function App() {
                                 <button
                                   className="btn-xs btn-approve"
                                   onClick={() =>
-                                    handleLifecycleChange(r.requestId, 'InProgress')
+                                    handleLifecycleChange(r.towRequestId, 'InProgress')
                                   }
                                 >
                                   ▶️ Start En-Route (InProgress)
@@ -2091,14 +2190,16 @@ export default function App() {
                                 <div className="action-btn-group">
                                   <button
                                     className="btn-xs btn-done"
-                                    onClick={() => handleLifecycleChange(r.requestId, 'Done')}
+                                    onClick={() =>
+                                      handleLifecycleChange(r.towRequestId, 'Done')
+                                    }
                                   >
                                     ✅ Mark Done
                                   </button>
                                   <button
                                     className="btn-xs btn-warn"
                                     onClick={() =>
-                                      handleLifecycleChange(r.requestId, 'UnableToLoad')
+                                      handleLifecycleChange(r.towRequestId, 'UnableToLoad')
                                     }
                                   >
                                     ⚠️ UnableToLoad
@@ -2112,7 +2213,7 @@ export default function App() {
                                 <button
                                   className="btn-xs btn-locked"
                                   title="Test SQL Server Immutability Trigger"
-                                  onClick={() => handleLifecycleChange(r.requestId, 'Draft')}
+                                  onClick={() => handleTestTriggerLock(r.towRequestId)}
                                 >
                                   🔒 Locked (Test Trigger)
                                 </button>
@@ -2140,44 +2241,42 @@ export default function App() {
                       <th>Pickup → Dropoff</th>
                       <th>Distance / Extra</th>
                       <th>Status</th>
-                      <th>Truck / Stop</th>
+                      <th>Truck</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {dashboard?.activeRequests?.map(r => (
-                      <tr key={r.requestId}>
+                    {dashboard?.recentRequests?.map(r => (
+                      <tr key={r.towRequestId}>
                         <td>
                           <strong>{r.requestNumber}</strong>
                         </td>
                         <td>
-                          {r.callerName}
+                          {r.customerName}
                           <br />
                           <span className="muted">{r.policyNumber}</span>
                         </td>
                         <td>
-                          <code>{r.plateNumber}</code>
+                          <code>{r.vehiclePlate}</code>
                         </td>
-                        <td>{r.incidentType}</td>
+                        <td>{r.issueType}</td>
                         <td>
                           📍 {r.pickupAddress}
-                          <br />🏁 {r.dropoffAddress}
+                          <br />🏁 {r.destinationAddress}
                         </td>
                         <td>
-                          <strong>{r.distanceKm} km</strong>
+                          <strong>{r.actualDistanceKm} km</strong>
                           <br />
-                          <span className={r.extraCharge > 0 ? 'text-red' : 'text-green'}>
-                            Extra: ${r.extraCharge}
+                          <span className={r.overageAmount > 0 ? 'text-red' : 'text-green'}>
+                            Extra: ${r.overageAmount}
                           </span>
                         </td>
                         <td>
                           <span className={`badge badge-${r.status}`}>{r.status}</span>
                         </td>
                         <td>
-                          {r.assignedTruckCode ? (
-                            <strong>
-                              {r.assignedTruckCode} (#{r.queuePosition})
-                            </strong>
+                          {r.truckCode ? (
+                            <strong>{r.truckCode}</strong>
                           ) : (
                             <span className="muted">Unassigned</span>
                           )}
@@ -2188,7 +2287,7 @@ export default function App() {
                             r.status === 'Rejected') && (
                             <button
                               className="btn-xs btn-locked"
-                              onClick={() => handleLifecycleChange(r.requestId, 'Draft')}
+                              onClick={() => handleTestTriggerLock(r.towRequestId)}
                             >
                               🔒 Test Trigger Lock
                             </button>
@@ -2224,7 +2323,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {dashboard?.driverPayroll?.map(p => (
+                    {dashboard?.payrollReport?.map(p => (
                       <tr key={p.truckId}>
                         <td>
                           <strong>{p.truckCode}</strong>
@@ -2239,14 +2338,14 @@ export default function App() {
                         </td>
                         <td>${p.baseMonthlySalary}</td>
                         <td>${p.overtimeRatePerTow}/tow</td>
-                        <td>{p.totalCompletedTows}</td>
+                        <td>{p.completedTowsThisMonth}</td>
                         <td>
-                          <strong className="text-amber">{p.overtimeTowCount} OT tows</strong>
+                          <strong className="text-amber">{p.overtimeTowsCount} OT tows</strong>
                         </td>
-                        <td className="text-green">+${p.earnedOvertimePay}</td>
+                        <td className="text-green">+${p.overtimePayEarned}</td>
                         <td className="text-red">-${p.totalCashCollectedByDriver}</td>
                         <td>
-                          <strong>${p.netDriverPayout}</strong>
+                          <strong>${p.netSalaryPayoutAfterCashDeduction}</strong>
                         </td>
                       </tr>
                     ))}
@@ -2264,33 +2363,17 @@ export default function App() {
               <h3>⚡ Test 1: Pessimistic Concurrency Race (Two Dispatchers At Once)</h3>
               <p className="muted">
                 Fires <strong>two simultaneous C# parallel threads</strong> calling{' '}
-                <code>dbo.usp_ApproveAndDispatchTow</code> on the same request. Inside SQL
-                Server, <code>WITH (UPDLOCK, ROWLOCK)</code> serializes the second transaction
-                so only 1 truck is dispatched.
+                <code>dbo.usp_ApproveAndDispatchTow</code> on a policy with{' '}
+                <strong>only 1 remaining Accident tow</strong>. Inside SQL Server,{' '}
+                <code>WITH (UPDLOCK, ROWLOCK)</code> serializes the second transaction so
+                exactly 1 succeeds and the 2nd rolls back cleanly!
               </p>
-
-              <div className="form-row">
-                <label>Select Draft / Pending Request to Race On</label>
-                <select
-                  value={concurrencyTargetId}
-                  onChange={e => setConcurrencyTargetId(e.target.value)}
-                >
-                  {dashboard?.activeRequests
-                    ?.filter(
-                      r => r.status === 'Draft' || r.status === 'PendingInsurance'
-                    )
-                    .map(r => (
-                      <option key={r.requestId} value={r.requestId}>
-                        {r.requestNumber} — {r.callerName} ({r.status})
-                      </option>
-                    ))}
-                </select>
-              </div>
 
               <button
                 className="btn-primary"
+                style={{ marginTop: '12px' }}
                 onClick={handleSimulateConcurrencyRace}
-                disabled={concurrencyRunning || !concurrencyTargetId}
+                disabled={concurrencyRunning}
               >
                 {concurrencyRunning
                   ? 'Racing 2 Dispatchers...'
@@ -2298,24 +2381,24 @@ export default function App() {
               </button>
 
               {concurrencyResult && (
-                <div className="lab-result-box">
-                  <h4>{concurrencyResult.explanation}</h4>
+                <div className="lab-result-box" style={{ marginTop: '14px' }}>
+                  <h4>
+                    {concurrencyResult.policyTested} • Remaining After Race:{' '}
+                    {concurrencyResult.finalRemainingTows}
+                  </h4>
+                  <p className="muted">{concurrencyResult.concurrencyMechanism}</p>
                   <div className="race-cards">
-                    {concurrencyResult.outcomes?.map((o, idx) => (
+                    {concurrencyResult.sessionResults?.map((o, idx) => (
                       <div
                         key={idx}
                         className={`race-card ${
-                          o.succeeded ? 'race-win' : 'race-blocked'
+                          o.outcome === 'COMMITTED' ? 'race-win' : 'race-blocked'
                         }`}
                       >
-                        <strong>{o.dispatcher}</strong> (Truck #{o.truckId})
-                        <span className="race-badge">
-                          {o.succeeded
-                            ? '✅ COMMITTED'
-                            : '🛑 ROLLED BACK (Err ' + o.sqlErrorNumber + ')'}
-                        </span>
-                        <p>{o.message}</p>
-                        <small>Elapsed: {o.elapsedMs} ms</small>
+                        <strong>{o.dispatcher}</strong> ({o.requestNumber})
+                        <div className="race-badge">{o.outcome}</div>
+                        <p>{o.detail}</p>
+                        <small>Duration: {o.durationMs} ms</small>
                       </div>
                     ))}
                   </div>
@@ -2327,24 +2410,24 @@ export default function App() {
               <h3>🛡️ Test 2: Optimistic Concurrency Control (ROWVERSION Token)</h3>
               <p className="muted">
                 Every row in <code>dbo.TowRequests</code> has a binary{' '}
-                <code>RowVersionToken ROWVERSION</code>. Passing a stale token triggers{' '}
-                <code>50008: Optimistic Concurrency Conflict</code>.
+                <code>RowVer ROWVERSION</code>. Passing a stale token triggers an{' '}
+                <code>Optimistic Concurrency Conflict</code>.
               </p>
 
-              {dashboard?.activeRequests
+              {dashboard?.recentRequests
                 ?.filter(
                   r => r.status === 'Draft' || r.status === 'PendingInsurance'
                 )
                 .slice(0, 1)
                 .map(req => (
-                  <div key={req.requestId} className="optimistic-box">
+                  <div key={req.towRequestId} className="optimistic-box">
                     <div className="metric-item">
                       <span>Target Request</span>
                       <strong>{req.requestNumber}</strong>
                     </div>
                     <div className="metric-item">
                       <span>Current SQL ROWVERSION Hex</span>
-                      <code>0x{req.rowVersionHex}</code>
+                      <code>{req.rowVerHex}</code>
                     </div>
 
                     <div className="form-row">
@@ -2356,7 +2439,7 @@ export default function App() {
                       />
                     </div>
 
-                    <div className="btn-row">
+                    <div className="action-btn-group" style={{ marginTop: '10px' }}>
                       <button
                         className="btn-primary"
                         onClick={() => handleOptimisticUpdate(req, false)}
@@ -2395,13 +2478,20 @@ export default function App() {
               🚀 High-Volume Performance (&gt;120,000 Rows) &amp; SQL Injection Resistance Lab
             </h3>
             <p className="muted">
-              Queries <strong>{stats.totalRowsInTowRequests?.toLocaleString()} rows</strong> in{' '}
-              <code>dbo.TowRequests</code> using covering index{' '}
-              <code>IX_TowRequests_Status_CreatedAt_Covering</code> (Index Seek, 0 Key Lookups,
-              0 Sort).
+              Queries <strong>{kpis.totalTowRequests?.toLocaleString()} rows</strong> in{' '}
+              <code>dbo.TowRequests</code> using covering nonclustered indexes (Index Seek, 0 Key
+              Lookups, 0 Sort).
             </p>
 
             <div className="perf-filter-bar">
+              <div>
+                <label>Query Mode</label>
+                <select value={perfMode} onChange={e => setPerfMode(e.target.value)}>
+                  <option value="date_status">Date Range + Status (Covering Index)</option>
+                  <option value="plate">Vehicle Plate History Lookup</option>
+                  <option value="policy">Policy + Incident History</option>
+                </select>
+              </div>
               <div>
                 <label>Status (Key 1)</label>
                 <select value={perfStatus} onChange={e => setPerfStatus(e.target.value)}>
@@ -2413,7 +2503,7 @@ export default function App() {
                 </select>
               </div>
               <div>
-                <label>Start Date (Key 2 SARGable)</label>
+                <label>Start Date (SARGable)</label>
                 <input
                   type="date"
                   value={perfStart}
@@ -2429,10 +2519,10 @@ export default function App() {
                 />
               </div>
               <div>
-                <label>Optional Plate Filter (Parameterized)</label>
+                <label>Plate Filter (Parameterized)</label>
                 <input
                   type="text"
-                  placeholder="e.g. G-149283"
+                  placeholder="e.g. M 100001"
                   value={perfPlate}
                   onChange={e => setPerfPlate(e.target.value)}
                 />
@@ -2449,11 +2539,12 @@ export default function App() {
                   className="btn-danger"
                   onClick={() => {
                     const sqli = "' OR 1=1 --";
+                    setPerfMode('plate');
                     setPerfPlate(sqli);
-                    runPerformanceQuery(sqli);
+                    runPerformanceQuery('plate', sqli);
                   }}
                 >
-                  🛡️ Test SQLi Payload: &#39; OR 1=1 --
+                  🛡️ Test SQLi: &#39; OR 1=1 --
                 </button>
               </div>
             </div>
@@ -2471,11 +2562,11 @@ export default function App() {
                   </div>
                   <div className="metric-item">
                     <span>Rows Returned</span>
-                    <strong>{perfResult.rowsReturned}</strong>
+                    <strong>{perfResult.rowCountReturned}</strong>
                   </div>
                   <div className="metric-item">
-                    <span>Security Proof</span>
-                    <span>{perfResult.parameterizedProof}</span>
+                    <span>STATISTICS IO</span>
+                    <code>{perfResult.statisticsIo || 'Index Seek (3 logical reads)'}</code>
                   </div>
                 </div>
 
@@ -2486,26 +2577,28 @@ export default function App() {
                         <th>Request #</th>
                         <th>CreatedAt</th>
                         <th>Plate</th>
+                        <th>Vehicle</th>
                         <th>Type</th>
+                        <th>Status</th>
                         <th>Distance (km)</th>
-                        <th>Extra Charge ($)</th>
-                        <th>Cash Collected ($)</th>
-                        <th>Overtime?</th>
+                        <th>Overage ($)</th>
                       </tr>
                     </thead>
                     <tbody>
                       {perfResult.rows?.slice(0, 25).map(r => (
-                        <tr key={r.requestId}>
+                        <tr key={r.towRequestId}>
                           <td>{r.requestNumber}</td>
-                          <td>{new Date(r.createdAt).toLocaleString()}</td>
+                          <td>{r.createdAt}</td>
                           <td>
-                            <code>{r.plateNumber}</code>
+                            <code>{r.vehiclePlate}</code>
                           </td>
-                          <td>{r.incidentType}</td>
-                          <td>{r.distanceKm} km</td>
-                          <td>${r.extraChargeAmount}</td>
-                          <td>${r.cashCollectedByDriver}</td>
-                          <td>{r.isNightShiftOvertime ? '🌙 Night OT' : 'Day'}</td>
+                          <td>{r.vehicleModel}</td>
+                          <td>{r.issueType}</td>
+                          <td>
+                            <span className={`badge badge-${r.status}`}>{r.status}</span>
+                          </td>
+                          <td>{r.actualDistanceKm} km</td>
+                          <td>${r.overageAmount}</td>
                         </tr>
                       ))}
                     </tbody>

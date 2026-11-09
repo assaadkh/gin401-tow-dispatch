@@ -823,18 +823,21 @@ SELECT
     t.BaseMonthlySalary,
     t.OvertimeRatePerTow,
     t.IsWorkingOffDay,
-    COUNT(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' THEN 1 END) AS CompletedTowsThisMonth,
-    COUNT(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' AND (tr.IsNightShift = 1 OR t.IsWorkingOffDay = 1) THEN 1 END) AS OvertimeTowsCount,
-    ISNULL(SUM(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' AND (tr.IsNightShift = 1 OR t.IsWorkingOffDay = 1) THEN t.OvertimeRatePerTow ELSE 0.00 END), 0.00) AS OvertimePayEarned,
-    ISNULL(SUM(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' THEN tr.CashCollected ELSE 0.00 END), 0.00) AS TotalCashCollectedByDriver,
-    ISNULL(SUM(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' THEN tr.OverageAmount ELSE 0.00 END), 0.00) AS TotalOverageBilled,
+    COUNT(tr.TowRequestId) AS CompletedTowsThisMonth,
+    COUNT(CASE WHEN (tr.IsNightShift = 1 OR t.IsWorkingOffDay = 1) THEN 1 END) AS OvertimeTowsCount,
+    ISNULL(SUM(CASE WHEN (tr.IsNightShift = 1 OR t.IsWorkingOffDay = 1) THEN t.OvertimeRatePerTow ELSE 0.00 END), 0.00) AS OvertimePayEarned,
+    ISNULL(SUM(tr.CashCollected), 0.00) AS TotalCashCollectedByDriver,
+    ISNULL(SUM(tr.OverageAmount), 0.00) AS TotalOverageBilled,
     (
         t.BaseMonthlySalary
-        + ISNULL(SUM(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' AND (tr.IsNightShift = 1 OR t.IsWorkingOffDay = 1) THEN t.OvertimeRatePerTow ELSE 0.00 END), 0.00)
-        - ISNULL(SUM(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' THEN tr.CashCollected ELSE 0.00 END), 0.00)
+        + ISNULL(SUM(CASE WHEN (tr.IsNightShift = 1 OR t.IsWorkingOffDay = 1) THEN t.OvertimeRatePerTow ELSE 0.00 END), 0.00)
+        - ISNULL(SUM(tr.CashCollected), 0.00)
     ) AS NetSalaryPayoutAfterCashDeduction
 FROM dbo.TowTrucks AS t
-LEFT JOIN dbo.TowRequests AS tr ON t.TruckId = tr.AssignedTruckId
+LEFT JOIN dbo.TowRequests AS tr
+    ON t.TruckId = tr.AssignedTruckId
+   AND tr.Status = 'Done'
+   AND tr.CreatedAt >= '2026-11-01'
 GROUP BY
     t.TruckId, t.TruckCode, t.LicensePlate, t.DriverName, t.DriverPhone,
     t.FleetStatus, t.BaseMonthlySalary, t.OvertimeRatePerTow, t.IsWorkingOffDay;
