@@ -201,7 +201,7 @@ erDiagram
 
 * **Tools Used:** Google Antigravity (Gemini) coding assistant.
 * **What AI Was Used For:**
-  * Scaffolding the standalone React.js UI components and Leaflet map visualization based on the business rules I previously designed for my towing dispatch prototype.
+  * Scaffolding the standalone React.js UI components and Google Maps map visualization based on the business rules I previously designed for my towing dispatch prototype.
   * Generating the set-based cross-join CTE (`L0..L3`) in [`03_seed_120k_data.sql`](sql/03_seed_120k_data.sql) to populate 120,000 realistic rows rapidly.
   * Formatting boilerplate ADO.NET `SqlDataReader` mapping code in [`backend/Program.cs`](backend/Program.cs).
 * **What I Verified, Debugged, and Fixed Myself:**

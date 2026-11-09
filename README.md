@@ -13,7 +13,7 @@ An end-to-end database application built for **GIN401** using **Microsoft SQL Se
 | **3. Transactions & Concurrency (10 pts)** | Multi-step changes wrapped in `BEGIN TRAN` + `TRY…CATCH` + `ROLLBACK`. Handles two simultaneous dispatchers using **Pessimistic Locking** (`WITH (UPDLOCK, ROWLOCK)` on policy quota tiers) and **Optimistic Concurrency** (`ROWVERSION` binary token comparison). |
 | **4. Performance (10 pts)** | 4 nonclustered covering indexes (`INCLUDE` columns + matching `ORDER BY` key order) on the 120,007-row `dbo.TowRequests` table achieving **Index Seek, 0 Key Lookups, 0 Sort operators, and only 3 logical page reads (< 5 ms)**. |
 | **5. Security (10 pts)** | 100% parameterized queries (`SqlCommand.Parameters`), dedicated least-privilege login (`tow_cad_app_login` / `db_tow_dispatcher_role` with `DENY DELETE` and `IsSysAdmin = 0`), and connection string loaded from `.env` (gitignored, zero passwords in source code). |
-| **6. Application (20 pts)** | Standalone C# ADO.NET Web API + React.js CAD interface with interactive Lebanon Leaflet map, live policy quota/cooldown validator, dispatch board, 2-user race condition simulator, and >120k-row performance & SQL injection lab. |
+| **6. Application (20 pts)** | Standalone C# ADO.NET Web API + React.js CAD interface with interactive Lebanon Google Maps map, live policy quota/cooldown validator, dispatch board, 2-user race condition simulator, and >120k-row performance & SQL injection lab. |
 
 ---
 

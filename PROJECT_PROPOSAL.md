@@ -4,7 +4,7 @@
 **Course:** GIN401 — Lab Project  
 **Student / GitHub Account:** Assaad Khalife (`assaadkh`)  
 **Repository:** [https://github.com/assaadkh/gin401-tow-dispatch](https://github.com/assaadkh/gin401-tow-dispatch)  
-**Technology Stack:** Microsoft SQL Server (`T-SQL`) • Standalone C# (.NET 9 Web API with Pure `ADO.NET` / `Microsoft.Data.SqlClient`) • Standalone React.js + Leaflet / Google Maps CAD UI  
+**Technology Stack:** Microsoft SQL Server (`T-SQL`) • Standalone C# (.NET 9 Web API with Pure `ADO.NET` / `Microsoft.Data.SqlClient`) • Standalone React.js + Google Maps / OSRM CAD UI  
 
 ---
 
@@ -25,7 +25,7 @@ The system is designed as a standalone 3-tier architecture without any external 
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│                   PRESENTATION TIER (React.js + Leaflet)                   │
+│                   PRESENTATION TIER (React.js + Google Maps)               │
 │  • Google Maps Road/Traffic/Hybrid CAD Map + OSRM Real Road Polylines      │
 │  • Slide-Over Fleet & Ongoing Jobs Drawer with Stop Priority Reordering    │
 │  • Built-In Lebanon Location Picker Modal (Photon/Nominatim + Reverse Geo) │
