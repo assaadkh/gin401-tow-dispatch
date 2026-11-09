@@ -65,7 +65,7 @@ export default function App() {
   const [newPlateCategory, setNewPlateCategory] = useState('Special / Custom Plate');
   const [showPlateModal, setShowPlateModal] = useState(false);
 
-  // Policy Quota Tier Editor State
+  // Policy Quota Tier Editor & New Policy Form State
   const [editingTier, setEditingTier] = useState(null);
   const [newTierForm, setNewTierForm] = useState({
     tierSequence: 3,
@@ -75,7 +75,21 @@ export default function App() {
     maxDistanceKm: 40,
     minIntervalDays: 7
   });
-  const [showTierEditor, setShowTierEditor] = useState(false);
+  const [showTierEditor, setShowTierEditor] = useState(true);
+  const [newPolicyForm, setNewPolicyForm] = useState({
+    customerName: '',
+    customerPhone: '+961-03-',
+    customerEmail: '',
+    policyNumber: `POL-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+    providerId: 1,
+    startDate: '2026-01-01',
+    expirationDate: '2027-01-01',
+    defaultAllowedKm: 50,
+    mechanicalAllowedTows: 3,
+    mechanicalCooldownDays: 7,
+    accidentAllowedTows: 1,
+    accidentCooldownDays: 0
+  });
 
   // Live Google Maps CAD Drawer & State
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -534,6 +548,42 @@ export default function App() {
     }
   };
 
+  // Create New Customer Insurance Policy (Standalone Policies Section)
+  const handleCreatePolicy = async e => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_BASE}/policies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newPolicyForm,
+          providerId: Number(newPolicyForm.providerId),
+          defaultAllowedKm: Number(newPolicyForm.defaultAllowedKm),
+          mechanicalAllowedTows: Number(newPolicyForm.mechanicalAllowedTows),
+          mechanicalCooldownDays: Number(newPolicyForm.mechanicalCooldownDays),
+          accidentAllowedTows: Number(newPolicyForm.accidentAllowedTows),
+          accidentCooldownDays: Number(newPolicyForm.accidentCooldownDays)
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create insurance policy');
+      showToast('success', 'Insurance Policy Created', data.message);
+      await fetchDashboard();
+      if (data.policyId) {
+        setSelectedPolicyId(data.policyId);
+      }
+      setNewPolicyForm(prev => ({
+        ...prev,
+        customerName: '',
+        customerPhone: '+961-03-',
+        customerEmail: '',
+        policyNumber: `POL-2026-${Math.floor(1000 + Math.random() * 9000)}`
+      }));
+    } catch (err) {
+      showToast('error', 'Policy Creation Failed', err.message);
+    }
+  };
+
   // Approve & Dispatch to Truck
   const handleDispatchTruck = async towRequestId => {
     const truckId =
@@ -725,7 +775,7 @@ export default function App() {
           <div className="o-app-brand">
             <span>🚨</span>
             <span>Towing &amp; Roadside CAD</span>
-            <span className="o-app-brand-badge">GIN401 Enterprise</span>
+            <span className="o-app-brand-badge">GIN401</span>
           </div>
 
           <nav className="o-menu-sections">
@@ -739,13 +789,19 @@ export default function App() {
               className={activeTab === 'queue' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => setActiveTab('queue')}
             >
-              📋 Tow Requests (Kanban / List)
+              📋 Tow Requests
             </button>
             <button
               className={activeTab === 'intake' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => setActiveTab('intake')}
             >
-              📞 Call Intake &amp; Policy Quotas
+              📞 Call Intake
+            </button>
+            <button
+              className={activeTab === 'policies' ? 'o-nav-link active' : 'o-nav-link'}
+              onClick={() => setActiveTab('policies')}
+            >
+              🛡️ Insurance Policies
             </button>
             <button
               className={activeTab === 'concurrency' ? 'o-nav-link active' : 'o-nav-link'}
@@ -757,21 +813,21 @@ export default function App() {
               className={activeTab === 'performance' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => setActiveTab('performance')}
             >
-              🚀 &gt;120k Performance Lab
+              🚀 Performance Lab
             </button>
           </nav>
         </div>
 
         <div className="o-navbar-systray">
           <button className="btn-incoming-call" onClick={triggerIncomingCall}>
-            📞 Simulate Incoming Call
+            📞 Simulate Call
           </button>
           <div className="o-systray-pill">
-            <span>DB Rows:</span>
+            <span>Rows:</span>
             <strong>{kpis.totalTowRequests?.toLocaleString()}</strong>
           </div>
           <div className="o-systray-pill">
-            <span>SQL User:</span>
+            <span>SQL:</span>
             <strong>{kpis.connectedSqlLogin}</strong>
           </div>
         </div>
@@ -785,7 +841,8 @@ export default function App() {
               <span>Roadside Assistance</span>
               <span className="muted">/</span>
               <span>
-                {activeTab === 'intake' && 'New Call Intake & Policy Quota Evaluation'}
+                {activeTab === 'intake' && 'Call Intake & Dispatch Request'}
+                {activeTab === 'policies' && 'Insurance Policies & Quota Tiers'}
                 {activeTab === 'queue' && 'Tow Requests & Driver Payroll'}
                 {activeTab === 'concurrency' && 'SQL Server Concurrency & Locking Lab'}
                 {activeTab === 'performance' && '120,000+ Rows Indexing & SQLi Lab'}
@@ -1625,7 +1682,7 @@ export default function App() {
               </form>
             </div>
 
-            {/* Right Panel: Live Eligibility + Sequential Quota Tier & Cooldown Editor */}
+            {/* Right Panel: Live Eligibility Preview + Link to Standalone Policies Section */}
             <div className="card">
               <div className="card-header-flex">
                 <div>
@@ -1637,10 +1694,10 @@ export default function App() {
                 </div>
                 <button
                   type="button"
-                  className="btn-xs"
-                  onClick={() => setShowTierEditor(prev => !prev)}
+                  className="btn-erp-primary"
+                  onClick={() => setActiveTab('policies')}
                 >
-                  ⚙️ {showTierEditor ? 'Hide Tier Editor' : 'Edit Quotas & Cooldown'}
+                  🛡️ Manage Insurance Policies
                 </button>
               </div>
 
@@ -1704,15 +1761,20 @@ export default function App() {
                 <p>Evaluating policy...</p>
               )}
 
-              {/* Sequential Policy Quota Tiers Table & Cooldown Editor */}
+              {/* Compact Summary of Selected Policy Tiers */}
               <div className="tiers-section">
-                <h4>
-                  📑 Sequential Quota Tiers for <code>{selectedPolicyObj?.policyNumber}</code>
-                </h4>
-                <p className="muted">
-                  Configure allowed tows, max covered distance (km), and{' '}
-                  <strong>allowed time passed between each tow type (Cooldown Days)</strong>.
-                </p>
+                <div className="card-header-flex" style={{ marginBottom: '8px' }}>
+                  <h4>
+                    📑 Active Quota Tiers for <code>{selectedPolicyObj?.policyNumber}</code>
+                  </h4>
+                  <button
+                    type="button"
+                    className="btn-xs"
+                    onClick={() => setActiveTab('policies')}
+                  >
+                    ➕ New Policy / ✏️ Edit Quotas
+                  </button>
+                </div>
                 <table className="data-table">
                   <thead>
                     <tr>
@@ -1721,8 +1783,7 @@ export default function App() {
                       <th>Used / Allowed</th>
                       <th>Remaining</th>
                       <th>Max Dist (km)</th>
-                      <th>Cooldown (Days)</th>
-                      {showTierEditor && <th>Edit</th>}
+                      <th>Cooldown</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1750,16 +1811,345 @@ export default function App() {
                             ⏱️ {tier.minIntervalDays} days
                           </span>
                         </td>
-                        {showTierEditor && (
-                          <td>
-                            <button
-                              className="btn-xs"
-                              onClick={() => setEditingTier({ ...tier })}
-                            >
-                              ✏️ Edit
-                            </button>
-                          </td>
-                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            </div>
+          </div>
+        )}
+
+        {/* STANDALONE TAB: INSURANCE POLICIES FILLING & SEQUENTIAL QUOTA TIER MANAGEMENT */}
+        {activeTab === 'policies' && (
+          <div className="grid-2">
+            {/* Left Column: Create / Fill New Insurance Policy */}
+            <div className="card">
+              <div className="card-header-flex">
+                <div>
+                  <h3>🛡️ Fill / Create New Insurance Policy</h3>
+                  <p className="muted">
+                    Creates a Customer, Insurance Policy, and Sequential Quota Tiers inside an ACID
+                    SQL Server transaction (<code>dbo.Customers</code> +{' '}
+                    <code>dbo.InsurancePolicies</code> + <code>dbo.PolicyQuotaTiers</code>)
+                  </p>
+                </div>
+                <span className="seq-badge">ACID Transaction</span>
+              </div>
+
+              <form onSubmit={handleCreatePolicy} className="intake-form">
+                <div className="form-row-3">
+                  <div>
+                    <label>Customer Full Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g., Rami Kanaan"
+                      value={newPolicyForm.customerName}
+                      onChange={e =>
+                        setNewPolicyForm({ ...newPolicyForm, customerName: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label>Customer Phone</label>
+                    <input
+                      type="text"
+                      placeholder="+961-03-889900"
+                      value={newPolicyForm.customerPhone}
+                      onChange={e =>
+                        setNewPolicyForm({ ...newPolicyForm, customerPhone: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label>Customer Email</label>
+                    <input
+                      type="email"
+                      placeholder="customer@domain.com"
+                      value={newPolicyForm.customerEmail}
+                      onChange={e =>
+                        setNewPolicyForm({ ...newPolicyForm, customerEmail: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="form-row-2">
+                  <div>
+                    <label>Insurance Provider</label>
+                    <select
+                      value={newPolicyForm.providerId}
+                      onChange={e =>
+                        setNewPolicyForm({
+                          ...newPolicyForm,
+                          providerId: Number(e.target.value)
+                        })
+                      }
+                    >
+                      <option value={1}>Allianz SNA Lebanon (ALLIANZ-LB)</option>
+                      <option value={2}>Bankers Assurance SAL (BANKERS-LB)</option>
+                      <option value={3}>AXA Middle East SAL (AXA-ME)</option>
+                      <option value={4}>Medgulf Insurance SAL (MEDGULF-LB)</option>
+                      <option value={5}>Fidelity Insurance Group (FIDELITY-LB)</option>
+                      <option value={6}>LIA Assurex SAL (LIA-LB)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Policy Number (Unique)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g., POL-2026-09999"
+                      value={newPolicyForm.policyNumber}
+                      onChange={e =>
+                        setNewPolicyForm({ ...newPolicyForm, policyNumber: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="form-row-3">
+                  <div>
+                    <label>Effective Start Date</label>
+                    <input
+                      type="date"
+                      value={newPolicyForm.startDate}
+                      onChange={e =>
+                        setNewPolicyForm({ ...newPolicyForm, startDate: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label>Expiration Date</label>
+                    <input
+                      type="date"
+                      value={newPolicyForm.expirationDate}
+                      onChange={e =>
+                        setNewPolicyForm({ ...newPolicyForm, expirationDate: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label>Max Covered Distance (km)</label>
+                    <input
+                      type="number"
+                      min="5"
+                      max="500"
+                      value={newPolicyForm.maxDistanceKm}
+                      onChange={e =>
+                        setNewPolicyForm({
+                          ...newPolicyForm,
+                          maxDistanceKm: Number(e.target.value)
+                        })
+                      }
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="tier-edit-box" style={{ marginTop: '4px' }}>
+                  <h5>⚙️ Initial Sequential Quota Tiers &amp; Cooldown Rules</h5>
+                  <div className="form-row-2" style={{ marginTop: '8px' }}>
+                    <div>
+                      <label>Tier #1 — Mechanical Breakdown Allowed Tows</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="20"
+                        value={newPolicyForm.mechanicalAllowedTows}
+                        onChange={e =>
+                          setNewPolicyForm({
+                            ...newPolicyForm,
+                            mechanicalAllowedTows: Number(e.target.value)
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Tier #1 — Mechanical Cooldown Interval (Days)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="365"
+                        value={newPolicyForm.mechanicalCooldownDays}
+                        onChange={e =>
+                          setNewPolicyForm({
+                            ...newPolicyForm,
+                            mechanicalCooldownDays: Number(e.target.value)
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-row-2" style={{ marginTop: '8px' }}>
+                    <div>
+                      <label>Tier #2 — Accident Recovery Allowed Tows</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="20"
+                        value={newPolicyForm.accidentAllowedTows}
+                        onChange={e =>
+                          setNewPolicyForm({
+                            ...newPolicyForm,
+                            accidentAllowedTows: Number(e.target.value)
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Tier #2 — Accident Cooldown Interval (Days)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="365"
+                        value={newPolicyForm.accidentCooldownDays}
+                        onChange={e =>
+                          setNewPolicyForm({
+                            ...newPolicyForm,
+                            accidentCooldownDays: Number(e.target.value)
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <button type="submit" className="btn-primary">
+                  ➕ Save New Insurance Policy &amp; Quota Tiers in SQL Server
+                </button>
+              </form>
+            </div>
+
+            {/* Right Column: Inspect & Edit Existing Policy Quotas & Cooldown Tiers */}
+            <div className="card">
+              <div className="card-header-flex">
+                <div>
+                  <h3>📑 Policy Directory &amp; Sequential Quota Tier Editor</h3>
+                  <p className="muted">
+                    Select any insurance policy to inspect or modify its sequential coverage tiers,
+                    distance caps, and cooldown intervals in <code>dbo.PolicyQuotaTiers</code>.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-xs"
+                  onClick={() => setShowTierEditor(prev => !prev)}
+                >
+                  ⚙️ {showTierEditor ? 'Hide Tier Editor' : 'Show Tier Editor'}
+                </button>
+              </div>
+
+              <div className="form-row" style={{ marginBottom: '12px' }}>
+                <label>Select Insurance Policy to Inspect / Configure</label>
+                <select
+                  value={selectedPolicyId}
+                  onChange={e => {
+                    const pid = Number(e.target.value);
+                    setSelectedPolicyId(pid);
+                    setIntakeForm(prev => ({ ...prev, policyId: pid }));
+                    setEditingTier(null);
+                  }}
+                >
+                  {dashboard?.policies?.map(p => (
+                    <option key={p.policyId} value={p.policyId}>
+                      {p.policyNumber} — {p.customerName} ({p.providerName}) | Exp:{' '}
+                      {p.expirationDate?.slice(0, 10)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedPolicyObj && (
+                <div className="elig-metrics" style={{ marginBottom: '14px' }}>
+                  <div className="metric-item">
+                    <span>Policy Number</span>
+                    <strong>{selectedPolicyObj.policyNumber}</strong>
+                  </div>
+                  <div className="metric-item">
+                    <span>Policyholder</span>
+                    <strong>{selectedPolicyObj.customerName}</strong>
+                  </div>
+                  <div className="metric-item">
+                    <span>Phone</span>
+                    <strong>{selectedPolicyObj.phone}</strong>
+                  </div>
+                  <div className="metric-item">
+                    <span>Provider</span>
+                    <strong>{selectedPolicyObj.providerName}</strong>
+                  </div>
+                  <div className="metric-item">
+                    <span>Max Free Tow</span>
+                    <strong>{selectedPolicyObj.maxCoveredDistanceKm} km</strong>
+                  </div>
+                  <div className="metric-item">
+                    <span>Total Quota Used</span>
+                    <strong>
+                      {selectedPolicyObj.usedTowsCount} / {selectedPolicyObj.totalAllowedTows}
+                    </strong>
+                  </div>
+                </div>
+              )}
+
+              <div className="tiers-section" style={{ marginTop: 0, borderTop: 'none', paddingTop: 0 }}>
+                <h4>
+                  📑 Sequential Quota Tiers for <code>{selectedPolicyObj?.policyNumber}</code>
+                </h4>
+                <p className="muted">
+                  Configure allowed tows, max covered distance (km), and{' '}
+                  <strong>minimum cooldown interval (days) between tows</strong>.
+                </p>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Seq</th>
+                      <th>Coverage Type</th>
+                      <th>Used / Allowed</th>
+                      <th>Remaining</th>
+                      <th>Max Dist (km)</th>
+                      <th>Cooldown (Days)</th>
+                      <th>Edit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedPolicyTiers.map(tier => (
+                      <tr key={tier.quotaTierId}>
+                        <td>
+                          <span className="seq-badge">#{tier.tierSequence}</span>
+                        </td>
+                        <td>
+                          <strong>{tier.coverageType}</strong>
+                        </td>
+                        <td>
+                          {tier.usedTows} / {tier.allowedTows}
+                        </td>
+                        <td>
+                          <strong
+                            className={tier.remainingTows <= 0 ? 'text-red' : 'text-green'}
+                          >
+                            {tier.remainingTows}
+                          </strong>
+                        </td>
+                        <td>{tier.maxDistanceKm} km</td>
+                        <td>
+                          <span className="badge badge-PendingInsurance">
+                            ⏱️ {tier.minIntervalDays} days
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            className="btn-xs"
+                            onClick={() => setEditingTier({ ...tier })}
+                          >
+                            ✏️ Edit
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1827,9 +2217,9 @@ export default function App() {
                 )}
 
                 {/* Add New Sequential Tier Form */}
-                {showTierEditor && !editingTier && (
+                {!editingTier && (
                   <form onSubmit={handleAddTier} className="tier-edit-box">
-                    <h5>➕ Add New Sequential Quota Tier to Policy</h5>
+                    <h5>➕ Add New Sequential Quota Tier to {selectedPolicyObj?.policyNumber}</h5>
                     <div className="form-row-3">
                       <div>
                         <label>Sequence #</label>
@@ -1881,7 +2271,6 @@ export default function App() {
                   </form>
                 )}
               </div>
-            </div>
             </div>
           </div>
         )}

@@ -35,13 +35,13 @@ const TRAFFIC_OVERLAY_URL =
   'https://mt1.google.com/vt?lyrs=h,traffic&x={x}&y={y}&z={z}';
 
 /**
- * Pure React Google Maps Web Mercator CAD Engine (No Leaflet!)
+ * Pure React Google Maps Web Mercator CAD Engine
  */
 export function GoogleCadMap({
   centerLat = 33.8938,
   centerLng = 35.5018,
   initialZoom = 11,
-  flyToTarget, // { lat, lng, zoom, ts }
+  flyToTarget,
   trafficEnabled = false,
   trucks = [],
   priorityQueue = [],
@@ -57,12 +57,11 @@ export function GoogleCadMap({
   const [center, setCenter] = useState({ lat: centerLat, lng: centerLng });
   const [zoom, setZoom] = useState(initialZoom);
   const [baseLayer, setBaseLayer] = useState('road'); // 'road' | 'traffic' | 'hybrid'
-  const [activePopup, setActivePopup] = useState(null); // { lat, lng, title, lines }
-  const [osrmRoutes, setOsrmRoutes] = useState({}); // { [towRequestId]: [[lat,lng], ...] }
+  const [activePopup, setActivePopup] = useState(null);
+  const [osrmRoutes, setOsrmRoutes] = useState({});
 
   const dragStateRef = useRef({ dragging: false, startX: 0, startY: 0, moved: false });
 
-  // Measure container size
   useEffect(() => {
     if (!containerRef.current) return;
     const updateSize = () => {
@@ -82,7 +81,6 @@ export function GoogleCadMap({
     };
   }, []);
 
-  // Respond to external flyTo requests
   useEffect(() => {
     if (flyToTarget && flyToTarget.lat && flyToTarget.lng) {
       setCenter({ lat: Number(flyToTarget.lat), lng: Number(flyToTarget.lng) });
@@ -122,7 +120,6 @@ export function GoogleCadMap({
     };
   };
 
-  // Compute visible Google Maps 256x256 tiles
   const maxTileIndex = Math.pow(2, zoom);
   const startTileX = Math.floor(topLeftWorldX / TILE_SIZE);
   const endTileX = Math.floor((topLeftWorldX + viewport.width) / TILE_SIZE);
@@ -158,7 +155,6 @@ export function GoogleCadMap({
     }
   }
 
-  // Panning handlers
   const handleMouseDown = e => {
     if (e.button !== 0) return;
     dragStateRef.current = {
@@ -254,7 +250,6 @@ export function GoogleCadMap({
 
           return (
             <g key={`route-${r.towRequestId}`}>
-              {/* Invisible wider hit-target for easy route clicking */}
               <polyline
                 points={pointsAttr}
                 fill="none"
@@ -269,17 +264,10 @@ export function GoogleCadMap({
               <polyline
                 points={pointsAttr}
                 fill="none"
-                stroke={
-                  isHighlighted
-                    ? '#fde047'
-                    : r.status === 'InProgress'
-                    ? '#38bdf8'
-                    : '#94a3b8'
-                }
+                stroke={isHighlighted ? '#714B67' : '#EF4444'}
                 strokeWidth={isHighlighted ? 6 : 4}
-                strokeDasharray={
-                  r.status === 'InProgress' || isHighlighted ? 'none' : '7, 7'
-                }
+                strokeDasharray={isHighlighted ? 'none' : '6, 8'}
+                strokeOpacity={isHighlighted ? 1 : 0.85}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 style={{ cursor: 'pointer', pointerEvents: 'stroke' }}
@@ -304,19 +292,18 @@ export function GoogleCadMap({
                 key={`radar-${t.truckId}`}
                 cx={pos.x}
                 cy={pos.y}
-                r={28}
-                fill="rgba(56, 189, 248, 0.22)"
-                stroke="#38bdf8"
-                strokeWidth={3}
+                r={26}
+                fill="rgba(113, 75, 103, 0.25)"
+                stroke="#714B67"
+                strokeWidth={4}
                 className="radar-pulse-ring"
               />
             );
           })}
       </svg>
 
-      {/* 3. HTML Marker Overlay Layer (Trucks, Pickup Pins, Dropoff Pins, Popups) */}
+      {/* 3. Clean Circular 34x34 Markers (📍 Pickup, 🏁 Dropoff, 🚛 Truck) */}
       <div className="gmap-marker-pane">
-        {/* Active Job Pickup & Dropoff Pins */}
         {activeJobs.map(r => {
           const isJobSelected = selectedJobId === r.towRequestId;
           const isTruckSelected =
@@ -332,14 +319,15 @@ export function GoogleCadMap({
 
           return (
             <React.Fragment key={`pins-${r.towRequestId}`}>
-              {/* Pickup Marker */}
+              {/* Pickup Circular Marker */}
               <div
-                className="gmap-pin"
+                className="gmap-circle-pin"
+                title={`Pickup: ${r.requestNumber} (${r.pickupAddress})`}
                 style={{
                   left: `${pPos.x}px`,
                   top: `${pPos.y}px`,
-                  background: r.status === 'InProgress' ? '#3b82f6' : '#ef4444',
-                  borderColor: isHighlighted ? '#fde047' : '#ffffff'
+                  background: isHighlighted ? '#714B67' : '#EF4444',
+                  transform: `translate(-50%, -50%) scale(${isHighlighted ? 1.15 : 1})`
                 }}
                 onClick={e => {
                   e.stopPropagation();
@@ -347,50 +335,55 @@ export function GoogleCadMap({
                   setActivePopup({
                     lat: r.pickupLat,
                     lng: r.pickupLng,
-                    title: `${r.requestNumber} (${r.status})`,
+                    title: `🚨 ${r.requestNumber} (Pickup)`,
                     lines: [
                       `Customer: ${r.customerName} (${r.vehiclePlate})`,
+                      `Vehicle: ${r.vehicleModel} • ${r.issueType}`,
                       `Pickup: ${r.pickupAddress}`,
                       `Dropoff: ${r.destinationAddress}`,
                       `Distance: ${r.actualDistanceKm} km (Covered: ${r.allowedDistanceKm} km)`,
+                      r.overageAmount > 0
+                        ? `⚠️ Overage: +${r.overageKm} km ($${r.overageAmount})`
+                        : '✅ Within Policy KM Limit',
                       r.truckCode
-                        ? `Assigned Truck: ${r.truckCode} ${
-                            stopNum ? `(Stop #${stopNum})` : ''
-                          }`
-                        : 'Unassigned'
+                        ? `Assigned: ${r.truckCode} ${stopNum ? `(Stop #${stopNum})` : ''}`
+                        : 'Assigned: Unassigned'
                     ]
                   });
                 }}
               >
-                📍 {stopNum ? `${stopNum}P:` : ''}{' '}
-                {r.requestNumber.replace('TOW-2026-', '#')}
+                {stopNum ? `${stopNum}P` : '📍'}
               </div>
 
-              {/* Dropoff Marker */}
+              {/* Dropoff Circular Marker */}
               <div
-                className="gmap-pin gmap-pin-dropoff"
+                className="gmap-circle-pin"
+                title={`Dropoff: ${r.requestNumber} (${r.destinationAddress})`}
                 style={{
                   left: `${dPos.x}px`,
-                  top: `${dPos.y}px`
+                  top: `${dPos.y}px`,
+                  background: stopNum ? '#1e293b' : '#10B981',
+                  width: '28px',
+                  height: '28px',
+                  fontSize: '12px'
                 }}
                 onClick={e => {
                   e.stopPropagation();
                   setActivePopup({
                     lat: r.destinationLat,
                     lng: r.destinationLng,
-                    title: `🏁 Dropoff (${r.requestNumber})`,
-                    lines: [r.destinationAddress, `Distance: ${r.actualDistanceKm} km`]
+                    title: `🏁 Destination (${r.requestNumber})`,
+                    lines: [r.destinationAddress, `Total Distance: ${r.actualDistanceKm} km`]
                   });
                 }}
               >
-                🏁 {stopNum ? `${stopNum}D:` : ''}{' '}
-                {r.requestNumber.replace('TOW-2026-', '#')}
+                {stopNum ? `${stopNum}D` : '🏁'}
               </div>
             </React.Fragment>
           );
         })}
 
-        {/* Fleet Truck Markers */}
+        {/* Fleet Truck Circular Markers */}
         {trucks.map(t => {
           const isSelected = selectedTruckId === t.truckId;
           const truckActiveJobs = priorityQueue.filter(
@@ -399,21 +392,24 @@ export function GoogleCadMap({
           const pos = projectToScreen(t.currentLat, t.currentLng);
           const bg =
             t.fleetStatus === 'Available'
-              ? '#10b981'
-              : t.fleetStatus === 'Busy'
-              ? '#f59e0b'
-              : '#ef4444';
+              ? '#10B981'
+              : t.fleetStatus === 'EnRoute'
+              ? '#3B82F6'
+              : t.fleetStatus === 'OnJob' || t.fleetStatus === 'Busy'
+              ? '#F59E0B'
+              : '#64748b';
 
           return (
             <div
               key={`truck-${t.truckId}`}
-              className="gmap-truck-marker"
+              className="gmap-circle-truck"
+              title={`🚛 ${t.truckCode} (${t.driverName} - ${t.fleetStatus})`}
               style={{
                 left: `${pos.x}px`,
                 top: `${pos.y}px`,
                 background: bg,
-                borderColor: isSelected ? '#38bdf8' : '#0f172a',
-                transform: `translate(-50%, -50%) scale(${isSelected ? 1.14 : 1})`
+                borderColor: isSelected ? '#714B67' : '#ffffff',
+                transform: `translate(-50%, -50%) scale(${isSelected ? 1.2 : 1})`
               }}
               onClick={e => {
                 e.stopPropagation();
@@ -424,53 +420,51 @@ export function GoogleCadMap({
                   title: `🚛 ${t.truckCode} (${t.licensePlate})`,
                   lines: [
                     `Driver: ${t.driverName} (${t.driverPhone})`,
-                    `Status: ${t.fleetStatus} | Active Queue: ${truckActiveJobs.length}`,
+                    `Status: ${t.fleetStatus} | Speed: ${t.speedKmh} km/h`,
+                    `Active Stop Queue: ${truckActiveJobs.length} jobs`,
                     `Base Salary: $${t.baseMonthlySalary} | OT: $${t.overtimeRatePerTow}/tow`
                   ]
                 });
               }}
             >
-              🚛 {t.truckCode}{' '}
-              {truckActiveJobs.length > 0 ? `(${truckActiveJobs.length})` : ''}
+              <span>🚛</span>
+              {truckActiveJobs.length > 0 && (
+                <span className="gmap-truck-count-badge">{truckActiveJobs.length}</span>
+              )}
             </div>
           );
         })}
 
         {/* Info Popup Window */}
-        {activePopup && (() => {
-          const popPos = projectToScreen(activePopup.lat, activePopup.lng);
-          return (
-            <div
-              className="gmap-popup-box"
-              style={{ left: `${popPos.x}px`, top: `${popPos.y - 18}px` }}
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="gmap-popup-header">
-                <strong>{activePopup.title}</strong>
-                <button onClick={() => setActivePopup(null)}>✕</button>
-              </div>
-              {activePopup.lines.map((line, i) => (
-                <div key={i} className="gmap-popup-line">
-                  {line}
+        {activePopup &&
+          (() => {
+            const popPos = projectToScreen(activePopup.lat, activePopup.lng);
+            return (
+              <div
+                className="gmap-popup-box"
+                style={{ left: `${popPos.x}px`, top: `${popPos.y - 22}px` }}
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="gmap-popup-header">
+                  <strong>{activePopup.title}</strong>
+                  <button onClick={() => setActivePopup(null)}>✕</button>
                 </div>
-              ))}
-            </div>
-          );
-        })()}
+                {activePopup.lines.map((line, i) => (
+                  <div key={i} className="gmap-popup-line">
+                    {line}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
       </div>
 
       {/* 4. Map Controls: Zoom +/- and Google Layer Switcher */}
       <div className="gmap-zoom-controls" onClick={e => e.stopPropagation()}>
-        <button
-          title="Zoom In"
-          onClick={() => setZoom(z => Math.min(19, z + 1))}
-        >
+        <button title="Zoom In" onClick={() => setZoom(z => Math.min(19, z + 1))}>
           +
         </button>
-        <button
-          title="Zoom Out"
-          onClick={() => setZoom(z => Math.max(7, z - 1))}
-        >
+        <button title="Zoom Out" onClick={() => setZoom(z => Math.max(7, z - 1))}>
           −
         </button>
       </div>
@@ -502,7 +496,7 @@ export function GoogleCadMap({
 }
 
 /**
- * Pure React Google Maps Location Picker Modal Canvas (Click or Drag Pin, No Leaflet!)
+ * Pure React Google Maps Location Picker Modal Canvas
  */
 export function GoogleLocationPickerMap({
   lat = 33.8938,
@@ -608,7 +602,6 @@ export function GoogleLocationPickerMap({
       !dragRef.current.moved &&
       containerRef.current
     ) {
-      // Single click on map -> drop pin at clicked position!
       const rect = containerRef.current.getBoundingClientRect();
       const px = e.clientX - rect.left;
       const py = e.clientY - rect.top;

@@ -170,7 +170,7 @@ app.MapGet("/api/dashboard", async () =>
     // 3. Featured Customers & Policies with Sequential Quota Tiers & Cooldown Days
     var policies = new List<object>();
     const string policySql = @"
-        SELECT TOP (25)
+        SELECT TOP (35)
             p.PolicyId,
             p.PolicyNumber,
             p.CustomerId,
@@ -185,7 +185,8 @@ app.MapGet("/api/dashboard", async () =>
         FROM dbo.InsurancePolicies AS p
         INNER JOIN dbo.Customers AS c ON p.CustomerId = c.CustomerId
         INNER JOIN dbo.InsuranceProviders AS pr ON p.ProviderId = pr.ProviderId
-        ORDER BY p.PolicyId ASC;";
+        WHERE p.PolicyId <= 20 OR p.PolicyId > 2000
+        ORDER BY CASE WHEN p.PolicyId > 2000 THEN 0 ELSE 1 END, p.PolicyId DESC;";
 
     var rawPolicies = new List<Dictionary<string, object?>>();
     await using (var cmd = new SqlCommand(policySql, conn))
@@ -216,7 +217,7 @@ app.MapGet("/api/dashboard", async () =>
         SELECT QuotaTierId, PolicyId, TierSequence, CoverageType, AllowedTows, UsedTows,
                (AllowedTows - UsedTows) AS RemainingTows, MaxDistanceKm, MinIntervalDays
         FROM dbo.PolicyQuotaTiers
-        WHERE PolicyId <= 25
+        WHERE PolicyId <= 20 OR PolicyId > 2000
         ORDER BY PolicyId ASC, TierSequence ASC, QuotaTierId ASC;";
 
     var tiersByPolicy = new Dictionary<int, List<object>>();
@@ -794,6 +795,75 @@ app.MapPost("/api/policies/{policyId:int}/tiers", async (int policyId, UpdateQuo
     }
 });
 
+app.MapPost("/api/policies", async (CreatePolicyDto dto) =>
+{
+    try
+    {
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        const string sql = @"
+            SET XACT_ABORT ON;
+            BEGIN TRANSACTION;
+
+            DECLARE @CustId INT;
+            SELECT @CustId = CustomerId FROM dbo.Customers WHERE Phone = @Phone;
+            IF @CustId IS NULL
+            BEGIN
+                INSERT INTO dbo.Customers (FullName, Phone, Email)
+                VALUES (@FullName, @Phone, @Email);
+                SET @CustId = SCOPE_IDENTITY();
+            END
+
+            INSERT INTO dbo.InsurancePolicies (
+                PolicyNumber, CustomerId, ProviderId, StartDate, ExpirationDate,
+                DefaultAllowedKm, DefaultMinIntervalDays, PolicyStatus
+            )
+            VALUES (
+                @PolicyNumber, @CustId, @ProviderId, @StartDate, @ExpirationDate,
+                @DefaultAllowedKm, @DefaultMinIntervalDays, 'Active'
+            );
+
+            DECLARE @NewPolicyId INT = SCOPE_IDENTITY();
+
+            INSERT INTO dbo.PolicyQuotaTiers (PolicyId, TierSequence, CoverageType, AllowedTows, UsedTows, MaxDistanceKm, MinIntervalDays)
+            VALUES
+                (@NewPolicyId, 1, 'Mechanical', @MechanicalAllowedTows, 0, @DefaultAllowedKm, @MechanicalCooldownDays),
+                (@NewPolicyId, 2, 'Accident',   @AccidentAllowedTows,   0, @DefaultAllowedKm, @AccidentCooldownDays);
+
+            COMMIT TRANSACTION;
+            SELECT @NewPolicyId AS NewPolicyId;";
+
+        await using var cmd = new SqlCommand(sql, conn);
+        cmd.Parameters.Add("@FullName", SqlDbType.NVarChar, 120).Value = dto.CustomerName;
+        cmd.Parameters.Add("@Phone", SqlDbType.VarChar, 30).Value = dto.CustomerPhone;
+        cmd.Parameters.Add("@Email", SqlDbType.VarChar, 120).Value = (object?)dto.CustomerEmail ?? DBNull.Value;
+        cmd.Parameters.Add("@PolicyNumber", SqlDbType.VarChar, 40).Value = dto.PolicyNumber;
+        cmd.Parameters.Add("@ProviderId", SqlDbType.Int).Value = dto.ProviderId;
+        cmd.Parameters.Add("@StartDate", SqlDbType.Date).Value = DateTime.Parse(dto.StartDate);
+        cmd.Parameters.Add("@ExpirationDate", SqlDbType.Date).Value = DateTime.Parse(dto.ExpirationDate);
+        cmd.Parameters.Add("@DefaultAllowedKm", SqlDbType.Decimal).Value = dto.DefaultAllowedKm;
+        cmd.Parameters.Add("@DefaultMinIntervalDays", SqlDbType.Int).Value = dto.MechanicalCooldownDays;
+        cmd.Parameters.Add("@MechanicalAllowedTows", SqlDbType.Int).Value = dto.MechanicalAllowedTows;
+        cmd.Parameters.Add("@MechanicalCooldownDays", SqlDbType.Int).Value = dto.MechanicalCooldownDays;
+        cmd.Parameters.Add("@AccidentAllowedTows", SqlDbType.Int).Value = dto.AccidentAllowedTows;
+        cmd.Parameters.Add("@AccidentCooldownDays", SqlDbType.Int).Value = dto.AccidentCooldownDays;
+
+        var newIdObj = await cmd.ExecuteScalarAsync();
+        int newPolicyId = Convert.ToInt32(newIdObj);
+
+        return Results.Ok(new
+        {
+            success = true,
+            policyId = newPolicyId,
+            policyNumber = dto.PolicyNumber,
+            message = $"Policy '{dto.PolicyNumber}' created for {dto.CustomerName} with sequential Mechanical & Accident quota tiers."
+        });
+    }
+    catch (SqlException ex)
+    {
+        return Results.BadRequest(new { success = false, error = ex.Message });
+    }
+});
+
 /*==============================================================================
   ENDPOINT 9: POST /api/tow-requests/{id}/test-immutability-trigger
 ==============================================================================*/
@@ -1179,3 +1249,17 @@ public record OptimisticEditDto(string IssueType, string IssueNotes, string Expe
 public record ReorderQueueDto(int TowRequestId, string Direction);
 public record CreatePlateCodeDto(string Code, string RegionDescription, int DisplaySequence);
 public record UpdateQuotaTierDto(int TierSequence, string CoverageType, int AllowedTows, int UsedTows, decimal MaxDistanceKm, int MinIntervalDays);
+public record CreatePolicyDto(
+    string CustomerName,
+    string CustomerPhone,
+    string? CustomerEmail,
+    string PolicyNumber,
+    int ProviderId,
+    string StartDate,
+    string ExpirationDate,
+    decimal DefaultAllowedKm,
+    int MechanicalAllowedTows,
+    int MechanicalCooldownDays,
+    int AccidentAllowedTows,
+    int AccidentCooldownDays
+);
