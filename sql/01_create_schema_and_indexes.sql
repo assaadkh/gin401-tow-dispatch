@@ -162,6 +162,9 @@ CREATE TABLE dbo.TowTrucks
     SpeedKmh            DECIMAL(5,1)      NOT NULL CONSTRAINT DF_TowTrucks_Speed DEFAULT (0.0),
     FleetStatus         VARCHAR(20)       NOT NULL CONSTRAINT DF_TowTrucks_Status DEFAULT ('Available'),
     MaxPayloadKg        INT               NOT NULL CONSTRAINT DF_TowTrucks_Payload DEFAULT (5000),
+    BaseMonthlySalary   DECIMAL(10,2)     NOT NULL CONSTRAINT DF_TowTrucks_Salary DEFAULT (850.00),
+    OvertimeRatePerTow  DECIMAL(8,2)      NOT NULL CONSTRAINT DF_TowTrucks_OtRate DEFAULT (15.00),
+    IsWorkingOffDay     BIT               NOT NULL CONSTRAINT DF_TowTrucks_OffDay DEFAULT (0),
     LastTelemetryAt     DATETIME2(0)      NOT NULL CONSTRAINT DF_TowTrucks_Telemetry DEFAULT (SYSDATETIME()),
     RowVer              ROWVERSION        NOT NULL,
 
@@ -172,7 +175,8 @@ CREATE TABLE dbo.TowTrucks
     CONSTRAINT CK_TowTrucks_Lng CHECK (CurrentLng BETWEEN -180.0 AND 180.0),
     CONSTRAINT CK_TowTrucks_Speed CHECK (SpeedKmh >= 0.0 AND SpeedKmh <= 200.0),
     CONSTRAINT CK_TowTrucks_Status CHECK (FleetStatus IN ('Available', 'EnRoute', 'Towing', 'OffDuty')),
-    CONSTRAINT CK_TowTrucks_Payload CHECK (MaxPayloadKg BETWEEN 1000 AND 30000)
+    CONSTRAINT CK_TowTrucks_Payload CHECK (MaxPayloadKg BETWEEN 1000 AND 30000),
+    CONSTRAINT CK_TowTrucks_Payroll CHECK (BaseMonthlySalary >= 0 AND OvertimeRatePerTow >= 0)
 );
 GO
 
@@ -203,6 +207,9 @@ CREATE TABLE dbo.TowRequests
     HasInsurance            BIT               NOT NULL CONSTRAINT DF_TowRequests_HasIns DEFAULT (0),
     PolicyId                INT               NULL,
     QuotaTierId             INT               NULL,
+    IsOutsourced            BIT               NOT NULL CONSTRAINT DF_TowRequests_Outsourced DEFAULT (0),
+    SubcontractorName       NVARCHAR(120)     NULL,
+    SubcontractorFee        DECIMAL(10,2)     NOT NULL CONSTRAINT DF_TowRequests_SubFee DEFAULT (0.00),
     AssignedTruckId         INT               NULL,
     TruckPrioritySequence   INT               NOT NULL CONSTRAINT DF_TowRequests_Priority DEFAULT (10),
     ActualDistanceKm        DECIMAL(8,2)      NOT NULL,
@@ -242,7 +249,7 @@ CREATE TABLE dbo.TowRequests
         ActualDistanceKm > 0 AND AllowedDistanceKm >= 0 AND OverageKm >= 0
     ),
     CONSTRAINT CK_TowRequests_Financials CHECK (
-        ExtraKmRate >= 0 AND OverageAmount >= 0 AND CashCollected >= 0
+        ExtraKmRate >= 0 AND OverageAmount >= 0 AND CashCollected >= 0 AND SubcontractorFee >= 0
     )
 );
 GO

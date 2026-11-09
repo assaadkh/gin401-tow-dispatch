@@ -505,8 +505,12 @@ CREATE OR ALTER PROCEDURE dbo.usp_CreateTowRequest
     @DestinationLng     DECIMAL(9,6),
     @HasInsurance       BIT = 0,
     @PolicyId           INT = NULL,
+    @IsOutsourced       BIT = 0,
+    @SubcontractorName  NVARCHAR(120) = NULL,
+    @SubcontractorFee   DECIMAL(10,2) = 0.00,
     @AssignedTruckId    INT = NULL,
-    @AutoApprove        BIT = 0
+    @AutoApprove        BIT = 0,
+    @ActualDistanceOverrideKm DECIMAL(8,2) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -528,9 +532,12 @@ BEGIN
             SET @VehiclePlate = LTRIM(RTRIM(CONCAT(@CodeLetter, ' ', LTRIM(RTRIM(ISNULL(@PlateDigits, ''))))));
         END;
 
-        -- Compute road distance using our scalar function
+        -- Compute road distance using OSRM override if provided, else our scalar function
         DECLARE @ActualDistanceKm DECIMAL(8,2) =
-            dbo.fn_CalculateRoadDistanceKm(@PickupLat, @PickupLng, @DestinationLat, @DestinationLng);
+            CASE WHEN @ActualDistanceOverrideKm IS NOT NULL AND @ActualDistanceOverrideKm > 0
+                 THEN @ActualDistanceOverrideKm
+                 ELSE dbo.fn_CalculateRoadDistanceKm(@PickupLat, @PickupLng, @DestinationLat, @DestinationLng)
+            END;
 
         -- Check if night shift (19:00 to 07:00)
         DECLARE @CurrentHour INT = DATEPART(HOUR, SYSDATETIME());
@@ -560,7 +567,8 @@ BEGIN
             RequestNumber, CustomerId, CallerPhone, PlateCodeId, PlateDigits, NoPlate,
             VehiclePlate, VehicleModel, IssueType, IssueNotes,
             PickupAddress, PickupLat, PickupLng, DestinationAddress, DestinationLat, DestinationLng,
-            HasInsurance, PolicyId, QuotaTierId, AssignedTruckId,
+            HasInsurance, PolicyId, QuotaTierId,
+            IsOutsourced, SubcontractorName, SubcontractorFee, AssignedTruckId,
             ActualDistanceKm, AllowedDistanceKm, OverageKm, ExtraKmRate, OverageAmount,
             IsNightShift, Status
         )
@@ -569,7 +577,9 @@ BEGIN
             @TempReqNum, @CustomerId, @CallerPhone, @PlateCodeId, @PlateDigits, @NoPlate,
             @VehiclePlate, @VehicleModel, @IssueType, @IssueNotes,
             @PickupAddress, @PickupLat, @PickupLng, @DestinationAddress, @DestinationLat, @DestinationLng,
-            @HasInsurance, @PolicyId, @PreviewTierId, @AssignedTruckId,
+            @HasInsurance, @PolicyId, @PreviewTierId,
+            @IsOutsourced, @SubcontractorName, ISNULL(@SubcontractorFee, 0.00),
+            CASE WHEN @IsOutsourced = 1 THEN NULL ELSE @AssignedTruckId END,
             @ActualDistanceKm, @AllowedKm, @OverageKm, 2.50, @OverageAmt,
             @IsNightShift, 'Draft'
         );
@@ -727,6 +737,107 @@ BEGIN
         THROW;
     END CATCH;
 END;
+GO
+
+/*==============================================================================
+  9. STORED PROCEDURE: dbo.usp_ReorderTruckJobQueue
+  Reorders a truck's active job priority queue (Up / Down) inside a transaction
+  so dispatchers can change Stop #1, Stop #2, Stop #3 directly from the CAD Map.
+==============================================================================*/
+CREATE OR ALTER PROCEDURE dbo.usp_ReorderTruckJobQueue
+    @TruckId        INT,
+    @TowRequestId   INT,
+    @Direction      VARCHAR(10) -- 'up' or 'down'
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        DECLARE @Ordered TABLE (
+            RowNum INT IDENTITY(1,1),
+            TowRequestId INT,
+            NewOrderKey INT
+        );
+
+        INSERT INTO @Ordered (TowRequestId, NewOrderKey)
+        SELECT
+            tr.TowRequestId,
+            ROW_NUMBER() OVER (ORDER BY tr.TruckPrioritySequence ASC, tr.TowRequestId ASC) * 10
+        FROM dbo.TowRequests AS tr WITH (UPDLOCK)
+        WHERE tr.AssignedTruckId = @TruckId
+          AND tr.Status IN ('Approved', 'InProgress');
+
+        DECLARE @TargetRow INT;
+        SELECT @TargetRow = RowNum FROM @Ordered WHERE TowRequestId = @TowRequestId;
+
+        IF @TargetRow IS NOT NULL
+        BEGIN
+            IF @Direction = 'up' AND @TargetRow > 1
+            BEGIN
+                UPDATE @Ordered SET NewOrderKey = NewOrderKey - 15 WHERE RowNum = @TargetRow;
+            END
+            ELSE IF @Direction = 'down' AND @TargetRow < (SELECT MAX(RowNum) FROM @Ordered)
+            BEGIN
+                UPDATE @Ordered SET NewOrderKey = NewOrderKey + 15 WHERE RowNum = @TargetRow;
+            END;
+
+            ;WITH Renumbered AS (
+                SELECT
+                    TowRequestId,
+                    ROW_NUMBER() OVER (ORDER BY NewOrderKey ASC, RowNum ASC) * 10 AS FinalSeq
+                FROM @Ordered
+            )
+            UPDATE tr
+            SET tr.TruckPrioritySequence = r.FinalSeq
+            FROM dbo.TowRequests AS tr
+            INNER JOIN Renumbered AS r ON tr.TowRequestId = r.TowRequestId;
+        END;
+
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH;
+END;
+GO
+
+/*==============================================================================
+  10. VIEW: dbo.vw_DriverPayrollAndCashReport
+  Computes Driver Payroll, Night-Shift (19:00-07:00) & Off-Day Overtime bonuses,
+  Cash Collected on scene (e.g. $200 cash), and Net Settlement per Driver.
+==============================================================================*/
+CREATE OR ALTER VIEW dbo.vw_DriverPayrollAndCashReport
+AS
+SELECT
+    t.TruckId,
+    t.TruckCode,
+    t.LicensePlate,
+    t.DriverName,
+    t.DriverPhone,
+    t.FleetStatus,
+    t.BaseMonthlySalary,
+    t.OvertimeRatePerTow,
+    t.IsWorkingOffDay,
+    COUNT(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' THEN 1 END) AS CompletedTowsThisMonth,
+    COUNT(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' AND (tr.IsNightShift = 1 OR t.IsWorkingOffDay = 1) THEN 1 END) AS OvertimeTowsCount,
+    ISNULL(SUM(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' AND (tr.IsNightShift = 1 OR t.IsWorkingOffDay = 1) THEN t.OvertimeRatePerTow ELSE 0.00 END), 0.00) AS OvertimePayEarned,
+    ISNULL(SUM(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' THEN tr.CashCollected ELSE 0.00 END), 0.00) AS TotalCashCollectedByDriver,
+    ISNULL(SUM(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' THEN tr.OverageAmount ELSE 0.00 END), 0.00) AS TotalOverageBilled,
+    (
+        t.BaseMonthlySalary
+        + ISNULL(SUM(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' AND (tr.IsNightShift = 1 OR t.IsWorkingOffDay = 1) THEN t.OvertimeRatePerTow ELSE 0.00 END), 0.00)
+        - ISNULL(SUM(CASE WHEN tr.Status = 'Done' AND tr.CreatedAt >= '2026-11-01' THEN tr.CashCollected ELSE 0.00 END), 0.00)
+    ) AS NetSalaryPayoutAfterCashDeduction
+FROM dbo.TowTrucks AS t
+LEFT JOIN dbo.TowRequests AS tr ON t.TruckId = tr.AssignedTruckId
+GROUP BY
+    t.TruckId, t.TruckCode, t.LicensePlate, t.DriverName, t.DriverPhone,
+    t.FleetStatus, t.BaseMonthlySalary, t.OvertimeRatePerTow, t.IsWorkingOffDay;
 GO
 
 PRINT '02_programmability_logic.sql completed successfully.';

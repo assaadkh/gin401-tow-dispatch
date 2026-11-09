@@ -1,5 +1,6 @@
 using System.Data;
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -22,6 +23,8 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 bool useIntegratedFallback = false;
+var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("GIN401TowDispatch/1.0");
 
 // Helper to open a SQL connection running strictly under our least-privilege login (tow_cad_app_login / tow_cad_app_user)
 async Task<SqlConnection> OpenLeastPrivilegeConnectionAsync()
@@ -41,7 +44,6 @@ async Task<SqlConnection> OpenLeastPrivilegeConnectionAsync()
         }
     }
 
-    // Fallback if SQL Server Windows service has not yet been restarted after enabling Mixed Mode
     var winConn = new SqlConnection("Server=localhost;Database=GIN401_TowDispatch;Integrated Security=True;Pooling=False;TrustServerCertificate=True;");
     await winConn.OpenAsync();
     await EnforceLeastPrivilegeContextAsync(winConn);
@@ -59,7 +61,6 @@ static async Task EnforceLeastPrivilegeContextAsync(SqlConnection conn)
     await cmd.ExecuteNonQueryAsync();
 }
 
-// Helper to convert SQL Server ROWVERSION (byte[8]) to Hex string ("0x000000000001A2B3")
 static string RowVerToHex(byte[] bytes) => "0x" + Convert.ToHexString(bytes);
 static byte[] HexToRowVer(string hex)
 {
@@ -67,17 +68,50 @@ static byte[] HexToRowVer(string hex)
     return Convert.FromHexString(clean);
 }
 
+// Helper: Calculate real road network driving distance via OSRM driving engine (with SQL scalar function fallback)
+async Task<decimal> CalculateRoadDistanceAsync(SqlConnection conn, decimal lat1, decimal lng1, decimal lat2, decimal lng2)
+{
+    try
+    {
+        string url = FormattableString.Invariant($"http://router.project-osrm.org/route/v1/driving/{lng1},{lat1};{lng2},{lat2}?overview=false");
+        using var resp = await httpClient.GetAsync(url);
+        if (resp.IsSuccessStatusCode)
+        {
+            using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync());
+            if (doc.RootElement.TryGetProperty("routes", out var routes) && routes.GetArrayLength() > 0)
+            {
+                double meters = routes[0].GetProperty("distance").GetDouble();
+                decimal km = Math.Round((decimal)(meters / 1000.0), 1);
+                if (km > 0) return km;
+            }
+        }
+    }
+    catch
+    {
+        // Fallback to SQL Server scalar function dbo.fn_CalculateRoadDistanceKm
+    }
+
+    await using var cmd = new SqlCommand("SELECT dbo.fn_CalculateRoadDistanceKm(@Lat1, @Lng1, @Lat2, @Lng2);", conn);
+    cmd.Parameters.Add("@Lat1", SqlDbType.Decimal).Value = lat1;
+    cmd.Parameters.Add("@Lng1", SqlDbType.Decimal).Value = lng1;
+    cmd.Parameters.Add("@Lat2", SqlDbType.Decimal).Value = lat2;
+    cmd.Parameters.Add("@Lng2", SqlDbType.Decimal).Value = lng2;
+    var val = await cmd.ExecuteScalarAsync();
+    return val is decimal d ? d : 5.0m;
+}
+
 /*==============================================================================
   ENDPOINT 1: GET /api/dashboard
   Loads KPIs, PlateCodes, Customers/Policies/QuotaTiers, Live TowTrucks,
   Window-Function Priority Queue (vw_FleetPriorityQueueAndRankings),
-  Active/Recent TowRequests, and Trigger Audit Logs via ADO.NET.
+  Driver Payroll Report (vw_DriverPayrollAndCashReport),
+  Recent TowRequests (Kanban/List), and Trigger Audit Logs via ADO.NET.
 ==============================================================================*/
 app.MapGet("/api/dashboard", async () =>
 {
     await using var conn = await OpenLeastPrivilegeConnectionAsync();
 
-    // 1. Summary KPIs + Current DB User (proves least-privilege login is active)
+    // 1. Summary KPIs + Current DB User
     var kpis = new Dictionary<string, object?>();
     const string kpiSql = @"
         SELECT
@@ -110,13 +144,13 @@ app.MapGet("/api/dashboard", async () =>
         }
     }
 
-    // 2. Lebanese Plate Codes (B, M, G, J, N, S, Z, R, T)
+    // 2. Dynamic Lebanese Plate Codes (B, M, G, Y, J, N, S, Z, R, T...)
     var plateCodes = new List<object>();
     const string plateSql = @"
         SELECT PlateCodeId, Code, RegionDescription, DisplaySequence
         FROM dbo.PlateCodes
         WHERE IsActive = 1
-        ORDER BY DisplaySequence ASC;";
+        ORDER BY DisplaySequence ASC, Code ASC;";
 
     await using (var cmd = new SqlCommand(plateSql, conn))
     await using (var reader = await cmd.ExecuteReaderAsync())
@@ -133,10 +167,10 @@ app.MapGet("/api/dashboard", async () =>
         }
     }
 
-    // 3. Featured Customers & Policies with Sequential Quota Tiers
+    // 3. Featured Customers & Policies with Sequential Quota Tiers & Cooldown Days
     var policies = new List<object>();
     const string policySql = @"
-        SELECT TOP (20)
+        SELECT TOP (25)
             p.PolicyId,
             p.PolicyNumber,
             p.CustomerId,
@@ -153,7 +187,6 @@ app.MapGet("/api/dashboard", async () =>
         INNER JOIN dbo.InsuranceProviders AS pr ON p.ProviderId = pr.ProviderId
         ORDER BY p.PolicyId ASC;";
 
-    var policyIds = new List<int>();
     var rawPolicies = new List<Dictionary<string, object?>>();
     await using (var cmd = new SqlCommand(policySql, conn))
     await using (var reader = await cmd.ExecuteReaderAsync())
@@ -161,7 +194,6 @@ app.MapGet("/api/dashboard", async () =>
         while (await reader.ReadAsync())
         {
             int pid = reader.GetInt32(0);
-            policyIds.Add(pid);
             rawPolicies.Add(new Dictionary<string, object?>
             {
                 ["policyId"] = pid,
@@ -180,13 +212,12 @@ app.MapGet("/api/dashboard", async () =>
         }
     }
 
-    // Load Quota Tiers for those policies
     const string tierSql = @"
         SELECT QuotaTierId, PolicyId, TierSequence, CoverageType, AllowedTows, UsedTows,
                (AllowedTows - UsedTows) AS RemainingTows, MaxDistanceKm, MinIntervalDays
         FROM dbo.PolicyQuotaTiers
         WHERE PolicyId <= 25
-        ORDER BY PolicyId ASC, TierSequence ASC;";
+        ORDER BY PolicyId ASC, TierSequence ASC, QuotaTierId ASC;";
 
     var tiersByPolicy = new Dictionary<int, List<object>>();
     await using (var cmd = new SqlCommand(tierSql, conn))
@@ -225,7 +256,8 @@ app.MapGet("/api/dashboard", async () =>
     var trucks = new List<object>();
     const string truckSql = @"
         SELECT TruckId, TruckCode, LicensePlate, DriverName, DriverPhone,
-               CurrentLat, CurrentLng, SpeedKmh, FleetStatus, MaxPayloadKg, LastTelemetryAt
+               CurrentLat, CurrentLng, SpeedKmh, FleetStatus, MaxPayloadKg,
+               BaseMonthlySalary, OvertimeRatePerTow, IsWorkingOffDay, LastTelemetryAt
         FROM dbo.TowTrucks
         ORDER BY TruckCode ASC;";
 
@@ -246,7 +278,10 @@ app.MapGet("/api/dashboard", async () =>
                 speedKmh = reader.GetDecimal(7),
                 fleetStatus = reader.GetString(8),
                 maxPayloadKg = reader.GetInt32(9),
-                lastTelemetryAt = reader.GetDateTime(10).ToString("yyyy-MM-dd HH:mm:ss")
+                baseMonthlySalary = reader.GetDecimal(10),
+                overtimeRatePerTow = reader.GetDecimal(11),
+                isWorkingOffDay = reader.GetBoolean(12),
+                lastTelemetryAt = reader.GetDateTime(13).ToString("yyyy-MM-dd HH:mm:ss")
             });
         }
     }
@@ -295,18 +330,19 @@ app.MapGet("/api/dashboard", async () =>
         }
     }
 
-    // 6. Recent Operational Tow Requests (including Drafts, Active, and Finalized)
+    // 6. Recent Operational Tow Requests
     var recentRequests = new List<object>();
     const string reqSql = @"
-        SELECT TOP (25)
+        SELECT TOP (30)
             tr.TowRequestId, tr.RequestNumber, tr.CustomerId, c.FullName AS CustomerName,
             tr.CallerPhone, tr.VehiclePlate, tr.VehicleModel, tr.IssueType, tr.IssueNotes,
             tr.PickupAddress, tr.PickupLat, tr.PickupLng,
             tr.DestinationAddress, tr.DestinationLat, tr.DestinationLng,
             tr.HasInsurance, tr.PolicyId, p.PolicyNumber,
+            tr.IsOutsourced, tr.SubcontractorName, tr.SubcontractorFee,
             tr.AssignedTruckId, t.TruckCode, tr.TruckPrioritySequence,
             tr.ActualDistanceKm, tr.AllowedDistanceKm, tr.OverageKm, tr.OverageAmount,
-            tr.CashCollected, tr.IsNightShift, tr.Status, tr.CreatedAt,
+            tr.CashCollected, tr.IsNightShift, tr.Status, tr.RejectionReason, tr.CreatedAt,
             CAST(tr.RowVer AS BINARY(8)) AS RowVerBytes
         FROM dbo.TowRequests AS tr
         INNER JOIN dbo.Customers AS c ON tr.CustomerId = c.CustomerId
@@ -340,23 +376,63 @@ app.MapGet("/api/dashboard", async () =>
                 hasInsurance = reader.GetBoolean(15),
                 policyId = reader.IsDBNull(16) ? (int?)null : reader.GetInt32(16),
                 policyNumber = reader.IsDBNull(17) ? null : reader.GetString(17),
-                assignedTruckId = reader.IsDBNull(18) ? (int?)null : reader.GetInt32(18),
-                truckCode = reader.IsDBNull(19) ? null : reader.GetString(19),
-                truckPrioritySequence = reader.GetInt32(20),
-                actualDistanceKm = reader.GetDecimal(21),
-                allowedDistanceKm = reader.GetDecimal(22),
-                overageKm = reader.GetDecimal(23),
-                overageAmount = reader.GetDecimal(24),
-                cashCollected = reader.GetDecimal(25),
-                isNightShift = reader.GetBoolean(26),
-                status = reader.GetString(27),
-                createdAt = reader.GetDateTime(28).ToString("yyyy-MM-dd HH:mm:ss"),
+                isOutsourced = reader.GetBoolean(18),
+                subcontractorName = reader.IsDBNull(19) ? null : reader.GetString(19),
+                subcontractorFee = reader.GetDecimal(20),
+                assignedTruckId = reader.IsDBNull(21) ? (int?)null : reader.GetInt32(21),
+                truckCode = reader.IsDBNull(22) ? null : reader.GetString(22),
+                truckPrioritySequence = reader.GetInt32(23),
+                actualDistanceKm = reader.GetDecimal(24),
+                allowedDistanceKm = reader.GetDecimal(25),
+                overageKm = reader.GetDecimal(26),
+                overageAmount = reader.GetDecimal(27),
+                cashCollected = reader.GetDecimal(28),
+                isNightShift = reader.GetBoolean(29),
+                status = reader.GetString(30),
+                rejectionReason = reader.IsDBNull(31) ? null : reader.GetString(31),
+                createdAt = reader.GetDateTime(32).ToString("yyyy-MM-dd HH:mm:ss"),
                 rowVerHex = RowVerToHex(rowVer)
             });
         }
     }
 
-    // 7. Trigger Audit Logs (dbo.TowAuditLogs)
+    // 7. Driver Payroll, Overtime (19:00-07:00 & Off-Day) & Cash Report
+    var payrollReport = new List<object>();
+    const string payrollSql = @"
+        SELECT TruckId, TruckCode, LicensePlate, DriverName, DriverPhone, FleetStatus,
+               BaseMonthlySalary, OvertimeRatePerTow, IsWorkingOffDay,
+               CompletedTowsThisMonth, OvertimeTowsCount, OvertimePayEarned,
+               TotalCashCollectedByDriver, TotalOverageBilled, NetSalaryPayoutAfterCashDeduction
+        FROM dbo.vw_DriverPayrollAndCashReport
+        ORDER BY TruckCode ASC;";
+
+    await using (var cmd = new SqlCommand(payrollSql, conn))
+    await using (var reader = await cmd.ExecuteReaderAsync())
+    {
+        while (await reader.ReadAsync())
+        {
+            payrollReport.Add(new
+            {
+                truckId = reader.GetInt32(0),
+                truckCode = reader.GetString(1),
+                licensePlate = reader.GetString(2),
+                driverName = reader.GetString(3),
+                driverPhone = reader.GetString(4),
+                fleetStatus = reader.GetString(5),
+                baseMonthlySalary = reader.GetDecimal(6),
+                overtimeRatePerTow = reader.GetDecimal(7),
+                isWorkingOffDay = reader.GetBoolean(8),
+                completedTowsThisMonth = reader.GetInt32(9),
+                overtimeTowsCount = reader.GetInt32(10),
+                overtimePayEarned = reader.GetDecimal(11),
+                totalCashCollectedByDriver = reader.GetDecimal(12),
+                totalOverageBilled = reader.GetDecimal(13),
+                netSalaryPayoutAfterCashDeduction = reader.GetDecimal(14)
+            });
+        }
+    }
+
+    // 8. Trigger Audit Logs (dbo.TowAuditLogs)
     var auditLogs = new List<object>();
     const string auditSql = @"
         SELECT TOP (20) AuditId, TowRequestId, RequestNumber, OldStatus, NewStatus, ActionNote, ChangedBy, ChangedAt
@@ -390,18 +466,26 @@ app.MapGet("/api/dashboard", async () =>
         trucks,
         priorityQueue,
         recentRequests,
+        payrollReport,
         auditLogs
     });
 });
 
 /*==============================================================================
-  ENDPOINT 2: GET /api/policies/{policyId}/check-eligibility?issueType=Accident
+  ENDPOINT 2: GET /api/policies/{policyId}/check-eligibility
   Calls T-SQL Table-Valued Function dbo.tvf_CheckPolicyEligibility(@PolicyId, @IssueType)
-  and Scalar Function dbo.fn_CalculateRoadDistanceKm via parameterized ADO.NET.
+  and calculates real road network driving distance via OSRM + SQL fallback.
 ==============================================================================*/
 app.MapGet("/api/policies/{policyId:int}/check-eligibility", async (int policyId, string issueType, decimal? lat1, decimal? lng1, decimal? lat2, decimal? lng2) =>
 {
     await using var conn = await OpenLeastPrivilegeConnectionAsync();
+
+    decimal pLat = lat1 ?? 33.8938m;
+    decimal pLng = lng1 ?? 35.5018m;
+    decimal dLat = lat2 ?? 33.8869m;
+    decimal dLng = lng2 ?? 35.5131m;
+
+    decimal actualKm = await CalculateRoadDistanceAsync(conn, pLat, pLng, dLat, dLng);
 
     const string sql = @"
         SELECT
@@ -417,23 +501,17 @@ app.MapGet("/api/policies/{policyId:int}/check-eligibility", async (int policyId
             e.DaysSinceLastTow,
             e.LastTowRequestNumber,
             e.LastTowDate,
-            e.StatusBanner,
-            dbo.fn_CalculateRoadDistanceKm(@Lat1, @Lng1, @Lat2, @Lng2) AS CalculatedRoadKm
+            e.StatusBanner
         FROM dbo.tvf_CheckPolicyEligibility(@PolicyId, @IssueType) AS e;";
 
     await using var cmd = new SqlCommand(sql, conn);
     cmd.Parameters.Add("@PolicyId", SqlDbType.Int).Value = policyId;
     cmd.Parameters.Add("@IssueType", SqlDbType.VarChar, 20).Value = issueType;
-    cmd.Parameters.Add("@Lat1", SqlDbType.Decimal).Value = lat1 ?? 33.8938m;
-    cmd.Parameters.Add("@Lng1", SqlDbType.Decimal).Value = lng1 ?? 35.5018m;
-    cmd.Parameters.Add("@Lat2", SqlDbType.Decimal).Value = lat2 ?? 33.8869m;
-    cmd.Parameters.Add("@Lng2", SqlDbType.Decimal).Value = lng2 ?? 35.5131m;
 
     await using var reader = await cmd.ExecuteReaderAsync();
     if (await reader.ReadAsync())
     {
         decimal allowedKm = reader.GetDecimal(6);
-        decimal actualKm = reader.GetDecimal(13);
         decimal overageKm = actualKm > allowedKm ? actualKm - allowedKm : 0m;
         decimal overageAmount = Math.Round(overageKm * 2.50m, 2);
 
@@ -469,7 +547,10 @@ app.MapPost("/api/tow-requests", async (CreateTowRequestDto dto) =>
 {
     try
     {
-    await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
+
+        decimal actualKm = await CalculateRoadDistanceAsync(
+            conn, dto.PickupLat, dto.PickupLng, dto.DestinationLat, dto.DestinationLng);
 
         await using var cmd = new SqlCommand("dbo.usp_CreateTowRequest", conn)
         {
@@ -492,8 +573,12 @@ app.MapPost("/api/tow-requests", async (CreateTowRequestDto dto) =>
         cmd.Parameters.Add("@DestinationLng", SqlDbType.Decimal).Value = dto.DestinationLng;
         cmd.Parameters.Add("@HasInsurance", SqlDbType.Bit).Value = dto.HasInsurance;
         cmd.Parameters.Add("@PolicyId", SqlDbType.Int).Value = (object?)dto.PolicyId ?? DBNull.Value;
+        cmd.Parameters.Add("@IsOutsourced", SqlDbType.Bit).Value = dto.IsOutsourced;
+        cmd.Parameters.Add("@SubcontractorName", SqlDbType.NVarChar, 120).Value = (object?)dto.SubcontractorName ?? DBNull.Value;
+        cmd.Parameters.Add("@SubcontractorFee", SqlDbType.Decimal).Value = dto.SubcontractorFee;
         cmd.Parameters.Add("@AssignedTruckId", SqlDbType.Int).Value = (object?)dto.AssignedTruckId ?? DBNull.Value;
         cmd.Parameters.Add("@AutoApprove", SqlDbType.Bit).Value = dto.AutoApprove;
+        cmd.Parameters.Add("@ActualDistanceOverrideKm", SqlDbType.Decimal).Value = actualKm;
 
         await using var reader = await cmd.ExecuteReaderAsync();
         object? result = null;
@@ -526,7 +611,7 @@ app.MapPost("/api/tow-requests/{id:int}/dispatch", async (int id, DispatchTowDto
 {
     try
     {
-    await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
 
         await using var cmd = new SqlCommand("dbo.usp_ApproveAndDispatchTow", conn)
         {
@@ -570,7 +655,7 @@ app.MapPost("/api/tow-requests/{id:int}/status", async (int id, UpdateLifecycleD
 {
     try
     {
-    await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
 
         await using var cmd = new SqlCommand("dbo.usp_UpdateTowLifecycleStatus", conn)
         {
@@ -592,15 +677,131 @@ app.MapPost("/api/tow-requests/{id:int}/status", async (int id, UpdateLifecycleD
 });
 
 /*==============================================================================
-  ENDPOINT 6: POST /api/tow-requests/{id}/test-immutability-trigger
-  Attempts to modify or delete a finalized ('Done'/'UnableToLoad'/'Rejected')
-  ticket to demonstrate dbo.trg_TowRequests_ImmutabilityAndAudit live!
+  ENDPOINT 6: POST /api/trucks/{truckId}/reorder-queue
+  Reorders a truck's active priority queue (Stop #1, Stop #2...) directly from
+  the CAD Map drawer via Stored Procedure dbo.usp_ReorderTruckJobQueue.
+==============================================================================*/
+app.MapPost("/api/trucks/{truckId:int}/reorder-queue", async (int truckId, ReorderQueueDto dto) =>
+{
+    try
+    {
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        await using var cmd = new SqlCommand("dbo.usp_ReorderTruckJobQueue", conn)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
+        cmd.Parameters.Add("@TruckId", SqlDbType.Int).Value = truckId;
+        cmd.Parameters.Add("@TowRequestId", SqlDbType.Int).Value = dto.TowRequestId;
+        cmd.Parameters.Add("@Direction", SqlDbType.VarChar, 10).Value = dto.Direction;
+
+        await cmd.ExecuteNonQueryAsync();
+        return Results.Ok(new { success = true });
+    }
+    catch (SqlException ex)
+    {
+        return Results.BadRequest(new { success = false, error = ex.Message });
+    }
+});
+
+/*==============================================================================
+  ENDPOINT 7: POST /api/plate-codes
+  Adds a new configurable Lebanese License Plate Letter (e.g. Y, R, M, C)
+==============================================================================*/
+app.MapPost("/api/plate-codes", async (CreatePlateCodeDto dto) =>
+{
+    try
+    {
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        const string sql = @"
+            INSERT INTO dbo.PlateCodes (Code, RegionDescription, DisplaySequence, IsActive)
+            VALUES (UPPER(LTRIM(RTRIM(@Code))), @RegionDescription, @DisplaySequence, 1);";
+
+        await using var cmd = new SqlCommand(sql, conn);
+        cmd.Parameters.Add("@Code", SqlDbType.VarChar, 10).Value = dto.Code;
+        cmd.Parameters.Add("@RegionDescription", SqlDbType.NVarChar, 100).Value = dto.RegionDescription;
+        cmd.Parameters.Add("@DisplaySequence", SqlDbType.Int).Value = dto.DisplaySequence;
+
+        await cmd.ExecuteNonQueryAsync();
+        return Results.Ok(new { success = true, message = $"Plate Letter '{dto.Code.ToUpperInvariant()}' added." });
+    }
+    catch (SqlException ex)
+    {
+        return Results.BadRequest(new { success = false, error = ex.Message });
+    }
+});
+
+/*==============================================================================
+  ENDPOINT 8: PUT /api/quota-tiers/{tierId} & POST /api/policies/{policyId}/tiers
+  Updates or adds Sequential Policy Quota Tiers (including MinIntervalDays —
+  allowed time passed between each tow type!)
+==============================================================================*/
+app.MapPut("/api/quota-tiers/{tierId:int}", async (int tierId, UpdateQuotaTierDto dto) =>
+{
+    try
+    {
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        const string sql = @"
+            UPDATE dbo.PolicyQuotaTiers
+            SET TierSequence    = @TierSequence,
+                CoverageType    = @CoverageType,
+                AllowedTows     = @AllowedTows,
+                UsedTows        = @UsedTows,
+                MaxDistanceKm   = @MaxDistanceKm,
+                MinIntervalDays = @MinIntervalDays
+            WHERE QuotaTierId = @QuotaTierId;";
+
+        await using var cmd = new SqlCommand(sql, conn);
+        cmd.Parameters.Add("@QuotaTierId", SqlDbType.Int).Value = tierId;
+        cmd.Parameters.Add("@TierSequence", SqlDbType.Int).Value = dto.TierSequence;
+        cmd.Parameters.Add("@CoverageType", SqlDbType.VarChar, 20).Value = dto.CoverageType;
+        cmd.Parameters.Add("@AllowedTows", SqlDbType.Int).Value = dto.AllowedTows;
+        cmd.Parameters.Add("@UsedTows", SqlDbType.Int).Value = dto.UsedTows;
+        cmd.Parameters.Add("@MaxDistanceKm", SqlDbType.Decimal).Value = dto.MaxDistanceKm;
+        cmd.Parameters.Add("@MinIntervalDays", SqlDbType.Int).Value = dto.MinIntervalDays;
+
+        await cmd.ExecuteNonQueryAsync();
+        return Results.Ok(new { success = true, message = "Policy Quota Tier updated." });
+    }
+    catch (SqlException ex)
+    {
+        return Results.BadRequest(new { success = false, error = ex.Message });
+    }
+});
+
+app.MapPost("/api/policies/{policyId:int}/tiers", async (int policyId, UpdateQuotaTierDto dto) =>
+{
+    try
+    {
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        const string sql = @"
+            INSERT INTO dbo.PolicyQuotaTiers (PolicyId, TierSequence, CoverageType, AllowedTows, UsedTows, MaxDistanceKm, MinIntervalDays)
+            VALUES (@PolicyId, @TierSequence, @CoverageType, @AllowedTows, 0, @MaxDistanceKm, @MinIntervalDays);";
+
+        await using var cmd = new SqlCommand(sql, conn);
+        cmd.Parameters.Add("@PolicyId", SqlDbType.Int).Value = policyId;
+        cmd.Parameters.Add("@TierSequence", SqlDbType.Int).Value = dto.TierSequence;
+        cmd.Parameters.Add("@CoverageType", SqlDbType.VarChar, 20).Value = dto.CoverageType;
+        cmd.Parameters.Add("@AllowedTows", SqlDbType.Int).Value = dto.AllowedTows;
+        cmd.Parameters.Add("@MaxDistanceKm", SqlDbType.Decimal).Value = dto.MaxDistanceKm;
+        cmd.Parameters.Add("@MinIntervalDays", SqlDbType.Int).Value = dto.MinIntervalDays;
+
+        await cmd.ExecuteNonQueryAsync();
+        return Results.Ok(new { success = true, message = "New sequential Quota Tier added." });
+    }
+    catch (SqlException ex)
+    {
+        return Results.BadRequest(new { success = false, error = ex.Message });
+    }
+});
+
+/*==============================================================================
+  ENDPOINT 9: POST /api/tow-requests/{id}/test-immutability-trigger
 ==============================================================================*/
 app.MapPost("/api/tow-requests/{id:int}/test-immutability-trigger", async (int id) =>
 {
     try
     {
-    await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
 
         const string sql = @"
             UPDATE dbo.TowRequests
@@ -625,14 +826,13 @@ app.MapPost("/api/tow-requests/{id:int}/test-immutability-trigger", async (int i
 });
 
 /*==============================================================================
-  ENDPOINT 7: PUT /api/tow-requests/{id}/optimistic-edit
-  Demonstrates Optimistic Concurrency Control using ROWVERSION (Session 06).
+  ENDPOINT 10: PUT /api/tow-requests/{id}/optimistic-edit
 ==============================================================================*/
 app.MapPut("/api/tow-requests/{id:int}/optimistic-edit", async (int id, OptimisticEditDto dto) =>
 {
     try
     {
-    await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
 
         await using var cmd = new SqlCommand("dbo.usp_UpdateDraftTowOptimistic", conn)
         {
@@ -654,22 +854,13 @@ app.MapPut("/api/tow-requests/{id:int}/optimistic-edit", async (int id, Optimist
 });
 
 /*==============================================================================
-  ENDPOINT 8: POST /api/concurrency/simulate-race
-  Demonstrates Two Simultaneous Dispatchers (Session 1 & Session 2) attempting
-  to approve two Accident Tow Requests on Policy 'POL-2026-ACC-LAST1' which has
-  ONLY 1 ACCIDENT TOW REMAINING!
-  - Resets Policy 2's Accident tier to (AllowedTows = 2, UsedTows = 1 -> 1 left)
-  - Creates 2 fresh Draft Accident Tow Requests on Policy 2
-  - Launches 2 parallel C# Tasks that call dbo.usp_ApproveAndDispatchTow at the
-    exact same millisecond with @SimulatedHoldMs = 350ms
-  - Returns the exact timeline proving UPDLOCK + TRY...CATCH prevents double-use!
+  ENDPOINT 11: POST /api/concurrency/simulate-race
 ==============================================================================*/
 app.MapPost("/api/concurrency/simulate-race", async () =>
 {
     int reqIdA, reqIdB;
     string reqNumA = "", reqNumB = "";
 
-    // Step 1: Prepare clean scenario on Policy 2 ('POL-2026-ACC-LAST1') -> 1 Accident Tow left
     await using (var setupConn = await OpenLeastPrivilegeConnectionAsync())
     {
         const string prepSql = @"
@@ -686,9 +877,7 @@ app.MapPost("/api/concurrency/simulate-race", async () =>
             await prepCmd.ExecuteNonQueryAsync();
         }
 
-        // Create Draft Request A (Dispatcher 1)
         reqIdA = await CreateRaceDraftAsync(setupConn, "M 881001", "BMW X5 (Dispatcher Tab 1)");
-        // Create Draft Request B (Dispatcher 2)
         reqIdB = await CreateRaceDraftAsync(setupConn, "M 882002", "Range Rover (Dispatcher Tab 2)");
 
         await using var numCmd = new SqlCommand("SELECT TowRequestId, RequestNumber FROM dbo.TowRequests WHERE TowRequestId IN (@A, @B)", setupConn);
@@ -704,7 +893,6 @@ app.MapPost("/api/concurrency/simulate-race", async () =>
 
     var globalTimer = Stopwatch.StartNew();
 
-    // Helper that runs one dispatcher's transaction on its own independent SQL connection
     async Task<object> RunDispatcherAsync(string dispatcherName, int towRequestId, string requestNumber, int truckId, int staggerMs)
     {
         if (staggerMs > 0) await Task.Delay(staggerMs);
@@ -734,7 +922,7 @@ app.MapPost("/api/concurrency/simulate-race", async () =>
                 startedAtMs,
                 finishedAtMs,
                 durationMs = finishedAtMs - startedAtMs,
-                detail = $"Acquired UPDLOCK on Policy #2, verified 1 Accident tow remaining, incremented UsedTows (1 -> 2), and COMMITTED transaction."
+                detail = "Acquired UPDLOCK on Policy #2, verified 1 Accident tow remaining, incremented UsedTows (1 -> 2), and COMMITTED transaction."
             };
         }
         catch (SqlException ex)
@@ -755,13 +943,11 @@ app.MapPost("/api/concurrency/simulate-race", async () =>
         }
     }
 
-    // Step 2: Launch BOTH Dispatchers concurrently!
     var task1 = RunDispatcherAsync("Dispatcher #1 (Tab A)", reqIdA, reqNumA, 3, 0);
     var task2 = RunDispatcherAsync("Dispatcher #2 (Tab B)", reqIdB, reqNumB, 4, 25);
 
     var results = await Task.WhenAll(task1, task2);
 
-    // Step 3: Read final Quota state from SQL Server to prove UsedTows did not exceed AllowedTows
     int finalAllowed = 0, finalUsed = 0;
     await using (var checkConn = await OpenLeastPrivilegeConnectionAsync())
     {
@@ -812,8 +998,12 @@ async Task<int> CreateRaceDraftAsync(SqlConnection conn, string digits, string m
     cmd.Parameters.Add("@DestinationLng", SqlDbType.Decimal).Value = 35.5590m;
     cmd.Parameters.Add("@HasInsurance", SqlDbType.Bit).Value = true;
     cmd.Parameters.Add("@PolicyId", SqlDbType.Int).Value = 2;
+    cmd.Parameters.Add("@IsOutsourced", SqlDbType.Bit).Value = false;
+    cmd.Parameters.Add("@SubcontractorName", SqlDbType.NVarChar, 120).Value = DBNull.Value;
+    cmd.Parameters.Add("@SubcontractorFee", SqlDbType.Decimal).Value = 0m;
     cmd.Parameters.Add("@AssignedTruckId", SqlDbType.Int).Value = DBNull.Value;
     cmd.Parameters.Add("@AutoApprove", SqlDbType.Bit).Value = false;
+    cmd.Parameters.Add("@ActualDistanceOverrideKm", SqlDbType.Decimal).Value = 22.0m;
 
     await using var r = await cmd.ExecuteReaderAsync();
     if (await r.ReadAsync())
@@ -822,10 +1012,7 @@ async Task<int> CreateRaceDraftAsync(SqlConnection conn, string digits, string m
 }
 
 /*==============================================================================
-  ENDPOINT 9: GET /api/performance/search
-  Executes the 3 SARGable Covering-Index Queries on the >120,000-row table
-  (dbo.TowRequests), captures STATISTICS IO messages + sub-millisecond timing,
-  and demonstrates 100% immunity to SQL Injection via SqlParameter!
+  ENDPOINT 12: GET /api/performance/search
 ==============================================================================*/
 app.MapGet("/api/performance/search", async (string mode, int? policyId, string? issueType, string? status, string? startDate, string? endDate, string? vehiclePlate) =>
 {
@@ -979,6 +1166,9 @@ public record CreateTowRequestDto(
     decimal DestinationLng,
     bool HasInsurance,
     int? PolicyId,
+    bool IsOutsourced,
+    string? SubcontractorName,
+    decimal SubcontractorFee,
     int? AssignedTruckId,
     bool AutoApprove
 );
@@ -986,3 +1176,6 @@ public record CreateTowRequestDto(
 public record DispatchTowDto(int AssignedTruckId);
 public record UpdateLifecycleDto(string NewStatus, decimal CashCollected, string? RejectionReason);
 public record OptimisticEditDto(string IssueType, string IssueNotes, string ExpectedRowVerHex);
+public record ReorderQueueDto(int TowRequestId, string Direction);
+public record CreatePlateCodeDto(string Code, string RegionDescription, int DisplaySequence);
+public record UpdateQuotaTierDto(int TierSequence, string CoverageType, int AllowedTows, int UsedTows, decimal MaxDistanceKm, int MinIntervalDays);

@@ -48,14 +48,15 @@ GO
 -- 5. Grant ONLY the Minimum Required Permissions to db_tow_dispatcher_role
 -- Read access on lookup & operational tables/views
 GRANT SELECT ON dbo.InsuranceProviders TO [db_tow_dispatcher_role];
-GRANT SELECT ON dbo.PlateCodes TO [db_tow_dispatcher_role];
+GRANT SELECT, INSERT, UPDATE ON dbo.PlateCodes TO [db_tow_dispatcher_role];
 GRANT SELECT, INSERT, UPDATE ON dbo.Customers TO [db_tow_dispatcher_role];
-GRANT SELECT, UPDATE ON dbo.InsurancePolicies TO [db_tow_dispatcher_role];
-GRANT SELECT, UPDATE ON dbo.PolicyQuotaTiers TO [db_tow_dispatcher_role];
+GRANT SELECT, INSERT, UPDATE ON dbo.InsurancePolicies TO [db_tow_dispatcher_role];
+GRANT SELECT, INSERT, UPDATE ON dbo.PolicyQuotaTiers TO [db_tow_dispatcher_role];
 GRANT SELECT, UPDATE ON dbo.TowTrucks TO [db_tow_dispatcher_role];
 GRANT SELECT, INSERT, UPDATE ON dbo.TowRequests TO [db_tow_dispatcher_role];
 GRANT SELECT, INSERT ON dbo.TowAuditLogs TO [db_tow_dispatcher_role];
 GRANT SELECT ON dbo.vw_FleetPriorityQueueAndRankings TO [db_tow_dispatcher_role];
+GRANT SELECT ON dbo.vw_DriverPayrollAndCashReport TO [db_tow_dispatcher_role];
 
 -- Execute rights on T-SQL Functions & Stored Procedures
 GRANT EXECUTE ON dbo.fn_CalculateRoadDistanceKm TO [db_tow_dispatcher_role];
@@ -64,6 +65,7 @@ GRANT EXECUTE ON dbo.usp_ApproveAndDispatchTow TO [db_tow_dispatcher_role];
 GRANT EXECUTE ON dbo.usp_CreateTowRequest TO [db_tow_dispatcher_role];
 GRANT EXECUTE ON dbo.usp_UpdateTowLifecycleStatus TO [db_tow_dispatcher_role];
 GRANT EXECUTE ON dbo.usp_UpdateDraftTowOptimistic TO [db_tow_dispatcher_role];
+GRANT EXECUTE ON dbo.usp_ReorderTruckJobQueue TO [db_tow_dispatcher_role];
 
 -- Explicitly DENY destructive operations (DELETE on tickets/audit logs)
 DENY DELETE ON dbo.TowRequests TO [db_tow_dispatcher_role];
