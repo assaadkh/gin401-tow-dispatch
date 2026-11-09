@@ -10,7 +10,7 @@
 
 ## 1. Executive Summary & Real-World Problem Statement
 Roadside assistance and towing dispatch centers in Lebanon manage thousands of emergency breakdown and accident calls on behalf of major insurance providers (e.g., *Bankers Assurance*, *LIA Assurex*, *Fidelity*, *Allianz SNA*). Dispatchers must simultaneously:
-1. Identify the caller (via Yeastar PBX Caller-ID) and match their active insurance policy.
+1. Identify the caller (via Telephony Caller-ID) and match their active insurance policy.
 2. Evaluate complex **sequential insurance coverage tiers** (Mechanical vs. Accident vs. Winch quotas, maximum covered kilometers, overage billing per kilometer, and mandatory **cooldown days between tows**).
 3. Enforce strict **Lebanese vehicle license plate rules** (mandatory plate code letter such as `G`, `B`, `M`, `Z` plus digits, or explicit `NO-PLATE` unregistered showroom handling).
 4. Dispatch the optimal tow truck on a **Live Google Maps CAD interface** with real-time traffic, OSRM road-network polylines, and multi-stop truck priority queues (`1P → 1D → 2P → 2D`) without allowing two concurrent dispatchers to double-assign the same job or exceed a customer's remaining policy quota.
@@ -29,7 +29,7 @@ The system is designed as a standalone 3-tier architecture without any external 
 │  • Google Maps Road/Traffic/Hybrid CAD Map + OSRM Real Road Polylines      │
 │  • Slide-Over Fleet & Ongoing Jobs Drawer with Stop Priority Reordering    │
 │  • Built-In Lebanon Location Picker Modal (Photon/Nominatim + Reverse Geo) │
-│  • Yeastar PBX Call Pop-Up, Logical Kanban Board & Concurrency/Perf Labs   │
+│  • Telephony Call Pop-Up, Logical Kanban Board & Concurrency/Perf Labs   │
 └────────────────────────────────────┬───────────────────────────────────────┘
                                      │ REST JSON over HTTP
                                      ▼
@@ -60,7 +60,7 @@ The database `GIN401_TowDispatch` consists of **8 normalized tables** in Third N
 |---|---|---|---|---|
 | 1 | `dbo.InsuranceProviders` | Insurance companies | `UNIQUE (ProviderCode)`, `CHECK (DefaultExtraKmRate >= 0)` | 4 rows |
 | 2 | `dbo.PlateCodes` | Lebanese plate prefixes (`G`, `B`, `M`, `O`, etc.) | `UNIQUE (CodeLetter)`, `CHECK (LEN(TRIM(CodeLetter)) >= 1)` | 8+ rows (extensible) |
-| 3 | `dbo.Customers` | Vehicle owners & Yeastar Caller-ID lookup | `FK -> PlateCodes`, `CK_Customers_PlateRule` (requires `PlateCodeID` unless `NoPlate = 1`) | 2,005 rows |
+| 3 | `dbo.Customers` | Vehicle owners & Caller-ID lookup | `FK -> PlateCodes`, `CK_Customers_PlateRule` (requires `PlateCodeID` unless `NoPlate = 1`) | 2,005 rows |
 | 4 | `dbo.InsurancePolicies` | Annual policies & quota counters | `UNIQUE (PolicyNumber)`, `CK_Policies_DateOrder`, `CK_Policies_QuotaBounds` (`Used <= Max`) | 2,005 rows |
 | 5 | `dbo.PolicyQuotaTiers` | Sequential coverage tiers & cooldown rules | `UNIQUE (PolicyID, SequenceOrder)`, `CHECK (MinIntervalDays >= 0)` | 10+ rows |
 | 6 | `dbo.TowTrucks` | Fleet GPS, driver payroll & off-day status | `CK_TowTrucks_Status`, `CK_TowTrucks_LebanonLat/Lng`, `BaseMonthlySalary`, `OvertimeRatePerTow` | 8 rows |

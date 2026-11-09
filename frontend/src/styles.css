@@ -69,7 +69,7 @@ body {
   flex-wrap: wrap;
 }
 
-.btn-yeastar {
+.btn-{
   background: linear-gradient(135deg, #10b981, #059669);
   color: #fff;
   border: none;
@@ -843,7 +843,7 @@ input, select {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-/* Modals (Location Picker, Yeastar Call, Policy Warning) */
+/* Modals (Location Picker, Call, Policy Warning) */
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -950,11 +950,11 @@ input, select {
   margin-top: 12px;
 }
 
-.yeastar-modal {
+.incoming-call-modal {
   border: 2px solid var(--green);
 }
 
-.yeastar-ring-badge {
+.incoming-call-ring-badge {
   display: inline-block;
   background: rgba(16, 185, 129, 0.2);
   color: #34d399;

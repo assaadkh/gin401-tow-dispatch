@@ -23,29 +23,29 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [policyWarningModal, setPolicyWarningModal] = useState(null);
-  const [yeastarCallModal, setYeastarCallModal] = useState(null);
+  const [incomingCallModal, setIncomingCallModal] = useState(null);
 
-  // Call Intake & Eligibility Form State
+  // Call Intake & Eligibility Form State (Empty by default — not pre-filled!)
   const [selectedPolicyId, setSelectedPolicyId] = useState(1);
   const [selectedIncidentType, setSelectedIncidentType] = useState('Mechanical');
   const [eligibility, setEligibility] = useState(null);
   const [intakeForm, setIntakeForm] = useState({
-    callerName: 'Rami Khoury',
-    callerPhone: '+961-03-111222',
-    vehicleDesc: 'BMW X5 (Black)',
+    callerName: '',
+    callerPhone: '',
+    vehicleDesc: '',
     noPlate: false,
     plateCodeId: 2, // M
-    plateDigits: '149283',
-    pickupAddress: 'Hamra Main Street, Beirut',
-    pickupLat: 33.8960,
-    pickupLng: 35.4820,
-    dropoffAddress: 'Bassoul Hneineh Service Center, Dora',
+    plateDigits: '',
+    pickupAddress: '',
+    pickupLat: BEIRUT_LAT,
+    pickupLng: BEIRUT_LNG,
+    dropoffAddress: '',
     dropoffLat: 33.8940,
     dropoffLng: 35.5520,
     isOutsourced: false,
     subcontractorName: '',
     subcontractorFee: 0,
-    notes: 'Engine overheating, customer waiting near pharmacy.'
+    notes: ''
   });
 
   // Built-in Google Maps Location Picker Modal State (Beirut default)
@@ -366,64 +366,44 @@ export default function App() {
     setLocationPicker(prev => ({ ...prev, open: false }));
   };
 
-  // Yeastar PBX Incoming Call Pop-up Simulation
-  const triggerYeastarIncomingCall = () => {
-    const policies = dashboard?.policies || [];
-    const sampleCallers = [
-      {
-        phone: policies[0]?.customerPhone || '+961-03-111222',
-        name: policies[0]?.customerName || 'Rami Khoury',
-        policyId: policies[0]?.policyId || 1,
-        vehicle: 'BMW X5 (Black)',
-        plateCodeId: 2,
-        digits: '149283'
-      },
-      {
-        phone: policies[1]?.customerPhone || '+961-70-222333',
-        name: policies[1]?.customerName || 'Nadine Haddad',
-        policyId: policies[1]?.policyId || 2,
-        vehicle: 'Mercedes C300 (White)',
-        plateCodeId: 1,
-        digits: '882104'
-      },
-      {
-        phone: policies[2]?.customerPhone || '+961-71-333444',
-        name: (policies[2]?.customerName || 'Karim Mansour') + ' (Zero Accident Quota Test)',
-        policyId: policies[2]?.policyId || 3,
-        vehicle: 'Toyota Prado (Silver)',
-        plateCodeId: 2,
-        digits: '509112'
-      },
-      {
-        phone: policies[3]?.customerPhone || '+961-03-444555',
-        name: (policies[3]?.customerName || 'Elie Geagea') + ' (Cooldown Test)',
-        policyId: policies[3]?.policyId || 4,
-        vehicle: 'Porsche Macan (Blue)',
-        plateCodeId: 3,
-        digits: '774120'
-      }
+  // Incoming Phone Call Pop-up Simulation (Only passes Caller Phone Number — does NOT auto-fill full form!)
+  const triggerIncomingCall = () => {
+    const samplePhones = [
+      '+961-03-111222',
+      '+961-70-222333',
+      '+961-71-333444',
+      '+961-03-444555',
+      '+961-76-889900'
     ];
-    const picked = sampleCallers[Math.floor(Math.random() * sampleCallers.length)];
-    setYeastarCallModal(picked);
+    const pickedPhone = samplePhones[Math.floor(Math.random() * samplePhones.length)];
+    setIncomingCallModal({ phone: pickedPhone });
   };
 
-  const acceptYeastarCall = caller => {
-    setSelectedPolicyId(caller.policyId);
-    setIntakeForm(prev => ({
-      ...prev,
-      callerName: caller.name,
-      callerPhone: caller.phone,
-      vehicleDesc: caller.vehicle,
+  const acceptIncomingCall = phoneStr => {
+    setIntakeForm({
+      callerName: '',
+      callerPhone: phoneStr,
+      vehicleDesc: '',
       noPlate: false,
-      plateCodeId: caller.plateCodeId,
-      plateDigits: caller.digits
-    }));
-    setYeastarCallModal(null);
+      plateCodeId: 2,
+      plateDigits: '',
+      pickupAddress: '',
+      pickupLat: BEIRUT_LAT,
+      pickupLng: BEIRUT_LNG,
+      dropoffAddress: '',
+      dropoffLat: 33.8940,
+      dropoffLng: 35.5520,
+      isOutsourced: false,
+      subcontractorName: '',
+      subcontractorFee: 0,
+      notes: ''
+    });
+    setIncomingCallModal(null);
     setActiveTab('intake');
     showToast(
       'success',
-      '📞 Yeastar PBX Call Connected',
-      `Auto-populated caller ${caller.name} (${caller.phone}) and matched Policy #${caller.policyId}.`
+      '📞 Incoming Call Answered',
+      `Caller phone ${phoneStr} connected. Please enter the caller's details and breakdown location.`
     );
   };
 
@@ -754,8 +734,8 @@ export default function App() {
         </div>
 
         <div className="header-actions">
-          <button className="btn-yeastar" onClick={triggerYeastarIncomingCall}>
-            📞 Simulate Incoming Yeastar Call
+          <button className="btn-incoming-call" onClick={triggerIncomingCall}>
+            📞 Simulate Incoming Call
           </button>
           <div className="kpi-pill">
             <span>Total DB Rows</span>
@@ -819,26 +799,34 @@ export default function App() {
         </div>
       )}
 
-      {/* Yeastar PBX Incoming Call Modal */}
-      {yeastarCallModal && (
+      {/* Incoming Phone Call Modal (Only passes Caller Phone Number) */}
+      {incomingCallModal && (
         <div className="modal-backdrop">
-          <div className="modal-box yeastar-modal">
-            <div className="yeastar-ring-badge">📲 INCOMING YEASTAR PBX CALL</div>
-            <h3>Caller ID: {yeastarCallModal.phone}</h3>
-            <p>
-              Matched Customer: <strong>{yeastarCallModal.name}</strong>
-              <br />
-              Vehicle: <strong>{yeastarCallModal.vehicle}</strong>
+          <div className="modal-box incoming-call-modal">
+            <div className="incoming-call-ring-badge">📲 INCOMING EMERGENCY CALL</div>
+            <h3>Incoming Caller Number</h3>
+            <div className="form-row" style={{ marginTop: '8px' }}>
+              <label>Caller Phone Number</label>
+              <input
+                type="text"
+                value={incomingCallModal.phone}
+                onChange={e =>
+                  setIncomingCallModal({ ...incomingCallModal, phone: e.target.value })
+                }
+              />
+            </div>
+            <p className="muted" style={{ marginTop: '6px' }}>
+              Answering will open Call Intake with only the caller phone number filled.
             </p>
             <div className="modal-actions">
               <button
                 className="btn-primary"
-                onClick={() => acceptYeastarCall(yeastarCallModal)}
+                onClick={() => acceptIncomingCall(incomingCallModal.phone)}
               >
-                ✅ Answer &amp; Auto-Fill Call Intake
+                📞 Answer Call
               </button>
-              <button className="btn-secondary" onClick={() => setYeastarCallModal(null)}>
-                Dismiss
+              <button className="btn-secondary" onClick={() => setIncomingCallModal(null)}>
+                Decline
               </button>
             </div>
           </div>
