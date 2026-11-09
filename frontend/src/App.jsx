@@ -719,74 +719,106 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      {/* Top Header */}
-      <header className="top-header">
-        <div className="brand">
-          <span className="brand-icon">🚨</span>
-          <div>
-            <h1>GIN401 — Roadside Assistance, Insurance Quota &amp; Towing CAD</h1>
-            <p className="subtitle">
-              Standalone C# (.NET 9 ADO.NET) + React + SQL Server •{' '}
-              <strong>{kpis.totalTowRequests?.toLocaleString()} Rows</strong> in{' '}
-              <code>dbo.TowRequests</code> • Login: <code>{kpis.connectedSqlLogin}</code>
-            </p>
+      {/* erp Enterprise Top Navbar (.o_main_navbar) */}
+      <header className="o-main-navbar">
+        <div className="o-navbar-left">
+          <div className="o-app-brand">
+            <span>🚨</span>
+            <span>Towing &amp; Roadside CAD</span>
+            <span className="o-app-brand-badge">GIN401 Enterprise</span>
           </div>
+
+          <nav className="o-menu-sections">
+            <button
+              className={activeTab === 'map' ? 'o-nav-link active' : 'o-nav-link'}
+              onClick={() => setActiveTab('map')}
+            >
+              🗺️ Live CAD Map
+            </button>
+            <button
+              className={activeTab === 'queue' ? 'o-nav-link active' : 'o-nav-link'}
+              onClick={() => setActiveTab('queue')}
+            >
+              📋 Tow Requests (Kanban / List)
+            </button>
+            <button
+              className={activeTab === 'intake' ? 'o-nav-link active' : 'o-nav-link'}
+              onClick={() => setActiveTab('intake')}
+            >
+              📞 Call Intake &amp; Policy Quotas
+            </button>
+            <button
+              className={activeTab === 'concurrency' ? 'o-nav-link active' : 'o-nav-link'}
+              onClick={() => setActiveTab('concurrency')}
+            >
+              ⚡ Concurrency Lab
+            </button>
+            <button
+              className={activeTab === 'performance' ? 'o-nav-link active' : 'o-nav-link'}
+              onClick={() => setActiveTab('performance')}
+            >
+              🚀 &gt;120k Performance Lab
+            </button>
+          </nav>
         </div>
 
-        <div className="header-actions">
+        <div className="o-navbar-systray">
           <button className="btn-incoming-call" onClick={triggerIncomingCall}>
             📞 Simulate Incoming Call
           </button>
-          <div className="kpi-pill">
-            <span>Total DB Rows</span>
+          <div className="o-systray-pill">
+            <span>DB Rows:</span>
             <strong>{kpis.totalTowRequests?.toLocaleString()}</strong>
           </div>
-          <div className="kpi-pill">
-            <span>Active Queue</span>
-            <strong className="text-amber">
-              {(kpis.activeDispatches || 0) + (kpis.pendingDrafts || 0)}
-            </strong>
-          </div>
-          <div className="kpi-pill">
-            <span>Available Trucks</span>
-            <strong className="text-green">{kpis.availableTrucks}</strong>
+          <div className="o-systray-pill">
+            <span>SQL User:</span>
+            <strong>{kpis.connectedSqlLogin}</strong>
           </div>
         </div>
       </header>
 
-      {/* Navigation Tabs */}
-      <nav className="nav-tabs">
-        <button
-          className={activeTab === 'map' ? 'tab-btn active' : 'tab-btn'}
-          onClick={() => setActiveTab('map')}
-        >
-          🗺️ 1. Live Google Maps CAD &amp; Fleet Queue
-        </button>
-        <button
-          className={activeTab === 'intake' ? 'tab-btn active' : 'tab-btn'}
-          onClick={() => setActiveTab('intake')}
-        >
-          📞 2. Call Intake, Location Picker &amp; Policy Quotas
-        </button>
-        <button
-          className={activeTab === 'queue' ? 'tab-btn active' : 'tab-btn'}
-          onClick={() => setActiveTab('queue')}
-        >
-          📋 3. Kanban Board, Dispatch &amp; Driver Payroll
-        </button>
-        <button
-          className={activeTab === 'concurrency' ? 'tab-btn active' : 'tab-btn'}
-          onClick={() => setActiveTab('concurrency')}
-        >
-          ⚡ 4. Concurrency Lab (UPDLOCK &amp; ROWVERSION)
-        </button>
-        <button
-          className={activeTab === 'performance' ? 'tab-btn active' : 'tab-btn'}
-          onClick={() => setActiveTab('performance')}
-        >
-          🚀 5. &gt;120k Rows Performance &amp; SQLi Lab
-        </button>
-      </nav>
+      {/* erp Control Panel & Breadcrumbs (shown on ERP views outside full-screen CAD Map) */}
+      {activeTab !== 'map' && (
+        <div className="o-control-panel">
+          <div className="o-cp-left">
+            <div className="o-breadcrumb-title">
+              <span>Roadside Assistance</span>
+              <span className="muted">/</span>
+              <span>
+                {activeTab === 'intake' && 'New Call Intake & Policy Quota Evaluation'}
+                {activeTab === 'queue' && 'Tow Requests & Driver Payroll'}
+                {activeTab === 'concurrency' && 'SQL Server Concurrency & Locking Lab'}
+                {activeTab === 'performance' && '120,000+ Rows Indexing & SQLi Lab'}
+              </span>
+            </div>
+            {activeTab !== 'intake' && (
+              <button
+                className="btn-erp-primary"
+                onClick={() => setActiveTab('intake')}
+              >
+                ➕ New Tow Request
+              </button>
+            )}
+          </div>
+
+          <div className="o-cp-right">
+            <div className="o-kpi-strip">
+              <div className="o-kpi-chip">
+                Active Queue:
+                <strong>{(kpis.activeDispatches || 0) + (kpis.pendingDrafts || 0)}</strong>
+              </div>
+              <div className="o-kpi-chip">
+                Available Trucks:
+                <strong>{kpis.availableTrucks}</strong>
+              </div>
+              <div className="o-kpi-chip">
+                Active Policies:
+                <strong>{kpis.activePolicies?.toLocaleString()}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast Notification */}
       {toast && (
@@ -974,312 +1006,398 @@ export default function App() {
       )}
 
       {/* Main Content Area */}
-      <main className="main-content">
+      <main className={activeTab === 'map' ? '' : 'o-workspace-container'}>
         {/* TAB 1: LIVE GOOGLE MAPS CAD & FLEET PRIORITY QUEUE */}
         {activeTab === 'map' && (
-          <div className="cad-map-fullscreen-wrapper">
-            <div className="cad-map-topbar">
-              <div className="cad-map-topbar-left">
-                <span className="badge badge-InProgress">🗺️ Google Maps CAD Engine</span>
-                <button
-                  className={trafficEnabled ? 'btn-traffic active' : 'btn-traffic'}
-                  onClick={() => setTrafficEnabled(prev => !prev)}
-                >
-                  🚦 {trafficEnabled ? 'Live Traffic: ON' : 'Traffic Overlay'}
-                </button>
-                {(selectedMapTruckId || selectedMapJobId) && (
-                  <button
-                    className="btn-xs"
-                    onClick={() => {
-                      setSelectedMapTruckId(null);
-                      setSelectedMapJobId(null);
-                    }}
-                  >
-                    ✕ Clear Highlight
-                  </button>
-                )}
-              </div>
-
+          <div className="cad-map-stage">
+            {/* Floating Top-Left Bar (Exact erp CAD Map Style) */}
+            <div className="cad-floating-topbar">
+              <h2>🚨 Live Towing CAD</h2>
+              <span className="badge badge-Available">Available</span>
+              <span className="badge badge-InProgress">En-Route</span>
+              <span className="badge badge-PendingInsurance">Pending</span>
               <button
-                className="btn-fleet-drawer-toggle"
-                onClick={() => setDrawerOpen(prev => !prev)}
+                className={trafficEnabled ? 'btn-traffic active' : 'btn-traffic'}
+                onClick={() => setTrafficEnabled(prev => !prev)}
               >
-                📊 Fleet &amp; Jobs ({dashboard?.trucks?.length || 0} Trucks / {ongoingJobs.length}{' '}
-                Active) {drawerOpen ? '▸' : '◂'}
+                🚦 {trafficEnabled ? 'Live Traffic: ON' : 'Traffic'}
               </button>
-            </div>
-
-            <div className="cad-map-stage">
-              <GoogleCadMap
-                centerLat={BEIRUT_LAT}
-                centerLng={BEIRUT_LNG}
-                initialZoom={11}
-                flyToTarget={mapFlyToTarget}
-                trafficEnabled={trafficEnabled}
-                trucks={dashboard?.trucks || []}
-                priorityQueue={dashboard?.priorityQueue || []}
-                activeJobs={ongoingJobs}
-                selectedTruckId={selectedMapTruckId}
-                selectedJobId={selectedMapJobId}
-                onSelectTruck={t => {
-                  // Rule: Do NOT auto-open side drawer when clicking a truck on the map!
-                  setSelectedMapTruckId(t.truckId);
-                  if (drawerOpen) {
-                    setDrawerTab('trucks');
-                    setTimeout(() => {
-                      const el = drawerCardRefs.current[`truck-${t.truckId}`];
-                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                    }, 60);
-                  }
-                }}
-                onSelectJob={r => {
-                  // Rule: Do NOT auto-open side drawer when clicking a pin on the map!
-                  setSelectedMapJobId(r.towRequestId);
-                  if (drawerOpen) {
-                    setDrawerTab('jobs');
-                    setTimeout(() => {
-                      const el = drawerCardRefs.current[`job-${r.towRequestId}`];
-                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                    }, 60);
-                  }
-                }}
-                onSelectRoute={r => {
-                  // Rule: Clicking a route line highlights it on the map AND if the side menu is open, switches to & highlights the card in the side menu!
-                  setSelectedMapJobId(r.towRequestId);
-                  if (r.assignedTruckId) setSelectedMapTruckId(r.assignedTruckId);
-                  if (drawerOpen) {
-                    setDrawerTab('jobs');
-                    setTimeout(() => {
-                      const el = drawerCardRefs.current[`job-${r.towRequestId}`];
-                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                    }, 60);
-                  }
-                }}
-              />
-
-              {/* Slide-over CAD Drawer with 2 Sub-Menus: 1. All Trucks | 2. Ongoing Jobs */}
-              {drawerOpen && (
-                <aside className="cad-slide-drawer">
-                  <div className="drawer-subtabs">
-                    <button
-                      className={drawerTab === 'trucks' ? 'subtab active' : 'subtab'}
-                      onClick={() => setDrawerTab('trucks')}
-                    >
-                      🚛 All Trucks ({dashboard?.trucks?.length || 0})
-                    </button>
-                    <button
-                      className={drawerTab === 'jobs' ? 'subtab active' : 'subtab'}
-                      onClick={() => setDrawerTab('jobs')}
-                    >
-                      🚨 Ongoing Jobs ({ongoingJobs.length})
-                    </button>
-                  </div>
-
-                  {/* SUB-MENU 1: ALL TRUCKS */}
-                  {drawerTab === 'trucks' && (
-                    <div className="drawer-list">
-                      {dashboard?.trucks?.map(t => {
-                        const isSelected = selectedMapTruckId === t.truckId;
-                        const truckJobs = (dashboard?.priorityQueue || []).filter(
-                          q => q.assignedTruckId === t.truckId
-                        );
-
-                        return (
-                          <div
-                            key={t.truckId}
-                            ref={el => (drawerCardRefs.current[`truck-${t.truckId}`] = el)}
-                            className={`truck-card ${isSelected ? 'card-highlighted' : ''}`}
-                            onClick={() => {
-                              setSelectedMapTruckId(t.truckId);
-                              setMapFlyToTarget({
-                                lat: t.currentLat,
-                                lng: t.currentLng,
-                                zoom: 13,
-                                ts: Date.now()
-                              });
-                            }}
-                          >
-                            <div className="truck-card-top">
-                              <strong>
-                                🚛 {t.truckCode} ({t.licensePlate})
-                              </strong>
-                              <span className={`badge badge-${t.fleetStatus}`}>
-                                {t.fleetStatus}
-                              </span>
-                            </div>
-                            <div className="truck-card-body">
-                              <div>
-                                Driver: <strong>{t.driverName}</strong> ({t.driverPhone})
-                              </div>
-                              <div>
-                                Active Queue: <strong>{truckJobs.length} stops</strong> | Salary: $
-                                {t.baseMonthlySalary}
-                              </div>
-                              <div
-                                className="truck-action-row"
-                                onClick={e => e.stopPropagation()}
-                              >
-                                <button
-                                  className="btn-xs"
-                                  onClick={() => {
-                                    setSelectedMapTruckId(t.truckId);
-                                    setMapFlyToTarget({
-                                      lat: t.currentLat,
-                                      lng: t.currentLng,
-                                      zoom: 14,
-                                      ts: Date.now()
-                                    });
-                                  }}
-                                >
-                                  🎯 Locate
-                                </button>
-                                <button
-                                  className="btn-xs"
-                                  onClick={() =>
-                                    setStopQueueTruckId(
-                                      stopQueueTruckId === t.truckId ? null : t.truckId
-                                    )
-                                  }
-                                >
-                                  📋 Stop Queue ({truckJobs.length})
-                                </button>
-                              </div>
-
-                              {/* Expandable Stop Priority Queue with ▲ Earlier / ▼ Later Reordering */}
-                              {stopQueueTruckId === t.truckId && (
-                                <div
-                                  className="stop-queue-box"
-                                  onClick={e => e.stopPropagation()}
-                                >
-                                  <h5>Multi-Stop Priority Sequence (1P → 1D → 2P → 2D)</h5>
-                                  {truckJobs.length === 0 ? (
-                                    <p className="muted">No active jobs assigned to this truck.</p>
-                                  ) : (
-                                    truckJobs.map((job, idx) => (
-                                      <div key={job.towRequestId} className="stop-queue-item">
-                                        <div>
-                                          <span className="seq-badge">
-                                            #{job.stopNumberInTruckQueue}
-                                          </span>{' '}
-                                          <strong>{job.requestNumber}</strong> ({job.vehiclePlate})
-                                          <div className="muted">
-                                            📍 {job.pickupAddress} → 🏁 {job.destinationAddress}
-                                          </div>
-                                        </div>
-                                        <div className="reorder-btns">
-                                          <button
-                                            className="btn-xs"
-                                            disabled={idx === 0}
-                                            title="Move Earlier"
-                                            onClick={() =>
-                                              handleReorderQueue(t.truckId, job.towRequestId, 'up')
-                                            }
-                                          >
-                                            ▲
-                                          </button>
-                                          <button
-                                            className="btn-xs"
-                                            disabled={idx === truckJobs.length - 1}
-                                            title="Move Later"
-                                            onClick={() =>
-                                              handleReorderQueue(
-                                                t.truckId,
-                                                job.towRequestId,
-                                                'down'
-                                              )
-                                            }
-                                          >
-                                            ▼
-                                          </button>
-                                        </div>
-                                      </div>
-                                    ))
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* SUB-MENU 2: ONGOING JOBS */}
-                  {drawerTab === 'jobs' && (
-                    <div className="drawer-list">
-                      {ongoingJobs.map(r => {
-                        const isSelected = selectedMapJobId === r.towRequestId;
-                        return (
-                          <div
-                            key={r.towRequestId}
-                            ref={el => (drawerCardRefs.current[`job-${r.towRequestId}`] = el)}
-                            className={`truck-card ${isSelected ? 'card-highlighted' : ''}`}
-                            onClick={() => {
-                              setSelectedMapJobId(r.towRequestId);
-                              setMapFlyToTarget({
-                                lat: r.pickupLat,
-                                lng: r.pickupLng,
-                                zoom: 13,
-                                ts: Date.now()
-                              });
-                            }}
-                          >
-                            <div className="truck-card-top">
-                              <strong>{r.requestNumber}</strong>
-                              <span className={`badge badge-${r.status}`}>{r.status}</span>
-                            </div>
-                            <div className="truck-card-body">
-                              <div>
-                                <strong>{r.customerName}</strong> • <code>{r.vehiclePlate}</code> (
-                                {r.issueType})
-                              </div>
-                              <div>📍 {r.pickupAddress}</div>
-                              <div>🏁 {r.destinationAddress}</div>
-                              <div>
-                                Distance: <strong>{r.actualDistanceKm} km</strong> | Extra:{' '}
-                                <strong
-                                  className={r.overageAmount > 0 ? 'text-red' : 'text-green'}
-                                >
-                                  ${r.overageAmount}
-                                </strong>
-                              </div>
-                              {r.truckCode && (
-                                <div className="text-amber">
-                                  🚛 Assigned: <strong>{r.truckCode}</strong>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </aside>
+              {(selectedMapTruckId || selectedMapJobId) && (
+                <button
+                  className="btn-xs"
+                  onClick={() => {
+                    setSelectedMapTruckId(null);
+                    setSelectedMapJobId(null);
+                  }}
+                >
+                  ✕ Clear Highlight
+                </button>
               )}
             </div>
+
+            {/* Floating Top-Right Button to Open Fleet & Jobs Drawer */}
+            {!drawerOpen && (
+              <button
+                className="cad-floating-btn"
+                onClick={() => setDrawerOpen(true)}
+              >
+                📊 Fleet &amp; Jobs ({dashboard?.trucks?.length || 0} / {ongoingJobs.length})
+              </button>
+            )}
+
+            <GoogleCadMap
+              centerLat={BEIRUT_LAT}
+              centerLng={BEIRUT_LNG}
+              initialZoom={11}
+              flyToTarget={mapFlyToTarget}
+              trafficEnabled={trafficEnabled}
+              trucks={dashboard?.trucks || []}
+              priorityQueue={dashboard?.priorityQueue || []}
+              activeJobs={ongoingJobs}
+              selectedTruckId={selectedMapTruckId}
+              selectedJobId={selectedMapJobId}
+              onSelectTruck={t => {
+                // Rule: Do NOT auto-open side drawer when clicking a truck on the map!
+                setSelectedMapTruckId(t.truckId);
+                if (drawerOpen) {
+                  setDrawerTab('trucks');
+                  setTimeout(() => {
+                    const el = drawerCardRefs.current[`truck-${t.truckId}`];
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  }, 60);
+                }
+              }}
+              onSelectJob={r => {
+                // Rule: Do NOT auto-open side drawer when clicking a pin on the map!
+                setSelectedMapJobId(r.towRequestId);
+                if (drawerOpen) {
+                  setDrawerTab('jobs');
+                  setTimeout(() => {
+                    const el = drawerCardRefs.current[`job-${r.towRequestId}`];
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  }, 60);
+                }
+              }}
+              onSelectRoute={r => {
+                // Rule: Clicking a route line highlights it on the map AND if the side menu is open, switches to & highlights the card in the side menu!
+                setSelectedMapJobId(r.towRequestId);
+                if (r.assignedTruckId) setSelectedMapTruckId(r.assignedTruckId);
+                if (drawerOpen) {
+                  setDrawerTab('jobs');
+                  setTimeout(() => {
+                    const el = drawerCardRefs.current[`job-${r.towRequestId}`];
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  }, 60);
+                }
+              }}
+            />
+
+            {/* Slide-over CAD Drawer with erp Plum Header & 2 Sub-Menus */}
+            {drawerOpen && (
+              <aside className="cad-slide-drawer">
+                <div className="drawer-header">
+                  <h3>📊 Fleet &amp; Ongoing Jobs</h3>
+                  <button
+                    className="close-drawer-btn"
+                    onClick={() => setDrawerOpen(false)}
+                    title="Close Drawer"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="drawer-subtabs">
+                  <button
+                    className={drawerTab === 'trucks' ? 'subtab active' : 'subtab'}
+                    onClick={() => setDrawerTab('trucks')}
+                  >
+                    🚛 All Trucks ({dashboard?.trucks?.length || 0})
+                  </button>
+                  <button
+                    className={drawerTab === 'jobs' ? 'subtab active' : 'subtab'}
+                    onClick={() => setDrawerTab('jobs')}
+                  >
+                    🚨 Ongoing Jobs ({ongoingJobs.length})
+                  </button>
+                </div>
+
+                {/* SUB-MENU 1: ALL TRUCKS */}
+                {drawerTab === 'trucks' && (
+                  <div className="drawer-list">
+                    {dashboard?.trucks?.map(t => {
+                      const isSelected = selectedMapTruckId === t.truckId;
+                      const truckJobs = (dashboard?.priorityQueue || []).filter(
+                        q => q.assignedTruckId === t.truckId
+                      );
+
+                      return (
+                        <div
+                          key={t.truckId}
+                          ref={el => (drawerCardRefs.current[`truck-${t.truckId}`] = el)}
+                          className={`truck-card ${isSelected ? 'card-highlighted' : ''}`}
+                          onClick={() => {
+                            setSelectedMapTruckId(t.truckId);
+                            setMapFlyToTarget({
+                              lat: t.currentLat,
+                              lng: t.currentLng,
+                              zoom: 13,
+                              ts: Date.now()
+                            });
+                          }}
+                        >
+                          <div className="truck-card-top">
+                            <strong>
+                              🚛 {t.truckCode} ({t.licensePlate})
+                            </strong>
+                            <span className={`badge badge-${t.fleetStatus}`}>
+                              {t.fleetStatus}
+                            </span>
+                          </div>
+                          <div className="truck-card-body">
+                            <div>
+                              Driver: <strong>{t.driverName}</strong> ({t.driverPhone})
+                            </div>
+                            <div>
+                              Active Queue: <strong>{truckJobs.length} stops</strong> | Salary: $
+                              {t.baseMonthlySalary}
+                            </div>
+                            <div
+                              className="truck-action-row"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <button
+                                className="btn-xs"
+                                onClick={() => {
+                                  setSelectedMapTruckId(t.truckId);
+                                  setMapFlyToTarget({
+                                    lat: t.currentLat,
+                                    lng: t.currentLng,
+                                    zoom: 14,
+                                    ts: Date.now()
+                                  });
+                                }}
+                              >
+                                🎯 Locate
+                              </button>
+                              <button
+                                className="btn-xs"
+                                onClick={() =>
+                                  setStopQueueTruckId(
+                                    stopQueueTruckId === t.truckId ? null : t.truckId
+                                  )
+                                }
+                              >
+                                📋 Stop Queue ({truckJobs.length})
+                              </button>
+                            </div>
+
+                            {/* Expandable Stop Priority Queue with ▲ Earlier / ▼ Later Reordering */}
+                            {stopQueueTruckId === t.truckId && (
+                              <div
+                                className="stop-queue-box"
+                                onClick={e => e.stopPropagation()}
+                              >
+                                <h5>Multi-Stop Priority Sequence (1P → 1D → 2P → 2D)</h5>
+                                {truckJobs.length === 0 ? (
+                                  <p className="muted">No active jobs assigned to this truck.</p>
+                                ) : (
+                                  truckJobs.map((job, idx) => (
+                                    <div key={job.towRequestId} className="stop-queue-item">
+                                      <div>
+                                        <span className="seq-badge">
+                                          #{job.stopNumberInTruckQueue}
+                                        </span>{' '}
+                                        <strong>{job.requestNumber}</strong> ({job.vehiclePlate})
+                                        <div className="muted">
+                                          📍 {job.pickupAddress} → 🏁 {job.destinationAddress}
+                                        </div>
+                                      </div>
+                                      <div className="reorder-btns">
+                                        <button
+                                          className="btn-xs"
+                                          disabled={idx === 0}
+                                          title="Move Earlier"
+                                          onClick={() =>
+                                            handleReorderQueue(t.truckId, job.towRequestId, 'up')
+                                          }
+                                        >
+                                          ▲
+                                        </button>
+                                        <button
+                                          className="btn-xs"
+                                          disabled={idx === truckJobs.length - 1}
+                                          title="Move Later"
+                                          onClick={() =>
+                                            handleReorderQueue(
+                                              t.truckId,
+                                              job.towRequestId,
+                                              'down'
+                                            )
+                                          }
+                                        >
+                                          ▼
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* SUB-MENU 2: ONGOING JOBS */}
+                {drawerTab === 'jobs' && (
+                  <div className="drawer-list">
+                    {ongoingJobs.map(r => {
+                      const isSelected = selectedMapJobId === r.towRequestId;
+                      return (
+                        <div
+                          key={r.towRequestId}
+                          ref={el => (drawerCardRefs.current[`job-${r.towRequestId}`] = el)}
+                          className={`truck-card ${isSelected ? 'card-highlighted' : ''}`}
+                          onClick={() => {
+                            setSelectedMapJobId(r.towRequestId);
+                            setMapFlyToTarget({
+                              lat: r.pickupLat,
+                              lng: r.pickupLng,
+                              zoom: 13,
+                              ts: Date.now()
+                            });
+                          }}
+                        >
+                          <div className="truck-card-top">
+                            <strong>{r.requestNumber}</strong>
+                            <span className={`badge badge-${r.status}`}>{r.status}</span>
+                          </div>
+                          <div className="truck-card-body">
+                            <div>
+                              <strong>{r.customerName}</strong> • <code>{r.vehiclePlate}</code> (
+                              {r.issueType})
+                            </div>
+                            <div>📍 {r.pickupAddress}</div>
+                            <div>🏁 {r.destinationAddress}</div>
+                            <div>
+                              Distance: <strong>{r.actualDistanceKm} km</strong> | Extra:{' '}
+                              <strong
+                                className={r.overageAmount > 0 ? 'text-red' : 'text-green'}
+                              >
+                                ${r.overageAmount}
+                              </strong>
+                            </div>
+                            {r.truckCode && (
+                              <div className="text-amber">
+                                🚛 Assigned: <strong>{r.truckCode}</strong>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </aside>
+            )}
           </div>
         )}
 
-        {/* TAB 2: CALL INTAKE, LOCATION PICKER & SEQUENTIAL INSURANCE QUOTAS */}
+        {/* TAB 2: CALL INTAKE, LOCATION PICKER & SEQUENTIAL INSURANCE QUOTAS (erp Form Sheet Style) */}
         {activeTab === 'intake' && (
-          <div className="two-col-grid">
-            <div className="card">
-              <div className="card-header-flex">
-                <div>
-                  <h3>📞 Call Responder Intake &amp; Dispatch Ticket</h3>
-                  <p className="muted">
-                    Executes <code>dbo.usp_CreateTowRequest</code> with parameterized{' '}
-                    <code>SqlCommand</code> &amp; built-in Google Maps Pin Picker.
-                  </p>
-                </div>
+          <div className="o-form-sheet">
+            {/* erp Statusbar Header */}
+            <div className="o-form-statusbar">
+              <div className="action-btn-group">
                 <button
                   type="button"
-                  className="btn-xs"
+                  className="btn-erp-secondary"
                   onClick={() => setShowPlateModal(true)}
                 >
-                  ⚙️ + Plate Letter
+                  ⚙️ + Add Plate Letter
+                </button>
+                <button
+                  type="button"
+                  className="btn-erp-secondary"
+                  onClick={() => setShowTierEditor(prev => !prev)}
+                >
+                  📑 {showTierEditor ? 'Hide Quota Tier Editor' : 'Configure Policy Quota Tiers'}
                 </button>
               </div>
+              <div className="o-statusbar-status">
+                <span className="o-stage-pill current">Draft Intake</span>
+                <span className="o-stage-pill">Pending Insurance</span>
+                <span className="o-stage-pill">Approved</span>
+                <span className="o-stage-pill">In Progress</span>
+                <span className="o-stage-pill">Unable to Load</span>
+                <span className="o-stage-pill">Done</span>
+              </div>
+            </div>
+
+            {/* erp Smart Stat Buttons (.oe_button_box) */}
+            {eligibility && (
+              <div className="oe-button-box">
+                <div className="oe-stat-button">
+                  <span className="oe-stat-icon">🛣️</span>
+                  <div className="oe-stat-info">
+                    <span className="oe-stat-value">{eligibility.calculatedRoadKm} km</span>
+                    <span className="oe-stat-text">Road Distance</span>
+                  </div>
+                </div>
+                <div className="oe-stat-button">
+                  <span className="oe-stat-icon">🛡️</span>
+                  <div className="oe-stat-info">
+                    <span className="oe-stat-value">{eligibility.allowedDistanceKm} km</span>
+                    <span className="oe-stat-text">Covered KM</span>
+                  </div>
+                </div>
+                <div className="oe-stat-button">
+                  <span className="oe-stat-icon">🎟️</span>
+                  <div className="oe-stat-info">
+                    <span className="oe-stat-value">
+                      {eligibility.remainingCategoryTows} left
+                    </span>
+                    <span className="oe-stat-text">{eligibility.targetCategory} Quota</span>
+                  </div>
+                </div>
+                <div className="oe-stat-button">
+                  <span className="oe-stat-icon">⏱️</span>
+                  <div className="oe-stat-info">
+                    <span className="oe-stat-value">
+                      {eligibility.requiredCooldownDays} days
+                    </span>
+                    <span className="oe-stat-text">Min Cooldown</span>
+                  </div>
+                </div>
+                <div className="oe-stat-button">
+                  <span className="oe-stat-icon">💵</span>
+                  <div className="oe-stat-info">
+                    <span className="oe-stat-value">${eligibility.overageAmount}</span>
+                    <span className="oe-stat-text">Extra Charge</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="o-sheet-body two-col-grid">
+              <div className="card">
+                <div className="card-header-flex">
+                  <div>
+                    <h3>📞 Call Responder Intake &amp; Dispatch Ticket</h3>
+                    <p className="muted">
+                      Executes <code>dbo.usp_CreateTowRequest</code> with parameterized{' '}
+                      <code>SqlCommand</code> &amp; built-in Google Maps Pin Picker.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-xs"
+                    onClick={() => setShowPlateModal(true)}
+                  >
+                    ⚙️ + Plate Letter
+                  </button>
+                </div>
 
               <form onSubmit={handleCreateTowRequest} className="intake-form">
                 <div className="form-row">
@@ -1763,6 +1881,7 @@ export default function App() {
                   </form>
                 )}
               </div>
+            </div>
             </div>
           </div>
         )}
