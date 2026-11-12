@@ -64,8 +64,22 @@ export default function App() {
     isOutsourced: false,
     subcontractorName: '',
     subcontractorFee: 0,
+    assignedTruckId: '',
+    prioritySequence: 10,
+    cashCollected: 0,
+    extraKmRate: 2.0,
+    isNightShift: false,
     notes: ''
   });
+  const [intakeNotebookTab, setIntakeNotebookTab] = useState('map'); // 'map' | 'tiers'
+
+  // Customers & Policies Sub-Menu, Search & View Mode State
+  const [custPolDropdownOpen, setCustPolDropdownOpen] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerViewMode, setCustomerViewMode] = useState('list'); // 'list' | 'form' | 'new'
+  const [policySearch, setPolicySearch] = useState('');
+  const [policyViewMode, setPolicyViewMode] = useState('list'); // 'list' | 'form' | 'new'
+  const [policyNotebookTab, setPolicyNotebookTab] = useState('tiers'); // 'tiers' | 'history'
 
   // Built-in Google Maps Location Picker Modal State (Beirut default)
   const [locationPicker, setLocationPicker] = useState({
@@ -461,6 +475,7 @@ export default function App() {
     setIntakeForm({
       callerName: '',
       callerPhone: phoneStr,
+      hasInsurance: false,
       vehicleDesc: '',
       noPlate: false,
       plateCodeId: 2,
@@ -474,6 +489,11 @@ export default function App() {
       isOutsourced: false,
       subcontractorName: '',
       subcontractorFee: 0,
+      assignedTruckId: '',
+      prioritySequence: 10,
+      cashCollected: 0,
+      extraKmRate: 2.0,
+      isNightShift: false,
       notes: ''
     });
     setIncomingCallModal(null);
@@ -485,9 +505,9 @@ export default function App() {
     );
   };
 
-  // Submit Call Intake
-  const handleCreateTowRequest = async e => {
-    e.preventDefault();
+  // Submit Call Intake (Supports both Save Draft and Approve & Dispatch Truck)
+  const handleCreateTowRequest = async (e, autoApproveDispatch = false) => {
+    if (e && e.preventDefault) e.preventDefault();
     if (!intakeForm.noPlate && (!intakeForm.plateCodeId || !intakeForm.plateDigits.trim())) {
       showToast(
         'error',
@@ -498,6 +518,11 @@ export default function App() {
     }
 
     const policyObj = dashboard?.policies?.find(p => p.policyId === Number(selectedPolicyId));
+    const chosenTruckId = intakeForm.assignedTruckId
+      ? Number(intakeForm.assignedTruckId)
+      : autoApproveDispatch
+      ? dashboard?.trucks?.find(t => t.fleetStatus === 'Available')?.truckId || 1
+      : null;
 
     try {
       const res = await fetch(`${API_BASE}/tow-requests`, {
@@ -505,17 +530,17 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customerId: Number(selectedCustomerId) || policyObj?.customerId || 1,
-          callerPhone: intakeForm.callerPhone,
+          callerPhone: intakeForm.callerPhone || selectedCustomerObj?.phone || '+961-03-000000',
           plateCodeId: intakeForm.noPlate ? null : Number(intakeForm.plateCodeId),
           plateDigits: intakeForm.noPlate ? null : intakeForm.plateDigits.trim(),
           noPlate: intakeForm.noPlate,
-          vehicleModel: intakeForm.vehicleDesc,
+          vehicleModel: intakeForm.vehicleDesc || 'Unspecified Vehicle',
           issueType: selectedIncidentType,
           issueNotes: intakeForm.notes,
-          pickupAddress: intakeForm.pickupAddress,
+          pickupAddress: intakeForm.pickupAddress || 'Beirut, Lebanon',
           pickupLat: Number(intakeForm.pickupLat),
           pickupLng: Number(intakeForm.pickupLng),
-          destinationAddress: intakeForm.dropoffAddress,
+          destinationAddress: intakeForm.dropoffAddress || 'Destination Garage, Beirut',
           destinationLat: Number(intakeForm.dropoffLat),
           destinationLng: Number(intakeForm.dropoffLng),
           hasInsurance: intakeForm.hasInsurance !== false && Boolean(selectedPolicyId),
@@ -523,8 +548,8 @@ export default function App() {
           isOutsourced: intakeForm.isOutsourced,
           subcontractorName: intakeForm.isOutsourced ? intakeForm.subcontractorName : null,
           subcontractorFee: intakeForm.isOutsourced ? Number(intakeForm.subcontractorFee) : 0,
-          assignedTruckId: null,
-          autoApprove: false
+          assignedTruckId: chosenTruckId,
+          autoApprove: Boolean(autoApproveDispatch)
         })
       });
       const data = await res.json();
@@ -643,6 +668,7 @@ export default function App() {
       if (data.customerId) {
         setSelectedCustomerId(data.customerId);
         setNewPolicyForm(prev => ({ ...prev, customerId: data.customerId }));
+        setCustomerViewMode('form');
       }
       setNewCustomerForm({ fullName: '', phone: '+961-03-', email: '' });
     } catch (err) {
@@ -677,6 +703,7 @@ export default function App() {
       }
       if (data.policyId) {
         setSelectedPolicyId(data.policyId);
+        setPolicyViewMode('form');
       }
       setNewPolicyForm(prev => ({
         ...prev,
@@ -1143,37 +1170,87 @@ export default function App() {
           <nav className="o-menu-sections">
             <button
               className={activeTab === 'map' ? 'o-nav-link active' : 'o-nav-link'}
-              onClick={() => setActiveTab('map')}
+              onClick={() => {
+                setCustPolDropdownOpen(false);
+                setActiveTab('map');
+              }}
             >
               Live Fleet Map
             </button>
             <button
               className={activeTab === 'queue' ? 'o-nav-link active' : 'o-nav-link'}
-              onClick={() => setActiveTab('queue')}
+              onClick={() => {
+                setCustPolDropdownOpen(false);
+                setActiveTab('queue');
+              }}
             >
               Dispatch Board
             </button>
             <button
               className={activeTab === 'intake' ? 'o-nav-link active' : 'o-nav-link'}
-              onClick={() => setActiveTab('intake')}
+              onClick={() => {
+                setCustPolDropdownOpen(false);
+                setActiveTab('intake');
+              }}
             >
               Call Desk
             </button>
-            <button
-              className={activeTab === 'policies' ? 'o-nav-link active' : 'o-nav-link'}
-              onClick={() => setActiveTab('policies')}
-            >
-              Customers &amp; Policies
-            </button>
+
+            {/* Customers & Policies Dropdown with 2 Sub-Menus: 1) Customers, 2) Insurance Policies */}
+            <div className="o-nav-dropdown-wrap">
+              <button
+                className={
+                  activeTab === 'customers' || activeTab === 'policies'
+                    ? 'o-nav-link active'
+                    : 'o-nav-link'
+                }
+                onClick={() => setCustPolDropdownOpen(prev => !prev)}
+              >
+                Customers &amp; Policies ▾
+              </button>
+              {custPolDropdownOpen && (
+                <div className="o-nav-dropdown-menu">
+                  <button
+                    type="button"
+                    className={activeTab === 'customers' ? 'o-dropdown-item active' : 'o-dropdown-item'}
+                    onClick={() => {
+                      setActiveTab('customers');
+                      setCustomerViewMode('list');
+                      setCustPolDropdownOpen(false);
+                    }}
+                  >
+                    Customers ({customersList.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={activeTab === 'policies' ? 'o-dropdown-item active' : 'o-dropdown-item'}
+                    onClick={() => {
+                      setActiveTab('policies');
+                      setPolicyViewMode('list');
+                      setCustPolDropdownOpen(false);
+                    }}
+                  >
+                    Insurance Policies ({dashboard?.policies?.length || 0})
+                  </button>
+                </div>
+              )}
+            </div>
+
             <button
               className={activeTab === 'concurrency' ? 'o-nav-link active' : 'o-nav-link'}
-              onClick={() => setActiveTab('concurrency')}
+              onClick={() => {
+                setCustPolDropdownOpen(false);
+                setActiveTab('concurrency');
+              }}
             >
               System Integrity
             </button>
             <button
               className={activeTab === 'performance' ? 'o-nav-link active' : 'o-nav-link'}
-              onClick={() => setActiveTab('performance')}
+              onClick={() => {
+                setCustPolDropdownOpen(false);
+                setActiveTab('performance');
+              }}
             >
               Dispatch Archive
             </button>
@@ -1207,38 +1284,108 @@ export default function App() {
               <span>Tracker Connect™</span>
               <span className="muted">/</span>
               <span>
-                {activeTab === 'intake' && '24/7 Emergency Call Desk & Coverage Evaluation'}
-                {activeTab === 'policies' && 'Customer Directory & Multi-Policy Management'}
-                {activeTab === 'queue' && 'Dispatch Lifecycle Board & Driver Settlement'}
-                {activeTab === 'concurrency' && 'Transaction Integrity & Multi-Operator Protection'}
-                {activeTab === 'performance' && 'National Dispatch Archive & Security Audit'}
+                {activeTab === 'intake' && 'New Call Intake & Tow Request'}
+                {activeTab === 'customers' && 'Customers Directory'}
+                {activeTab === 'policies' && 'Insurance Policies & Quotas'}
+                {activeTab === 'queue' && 'Tow Requests Dispatch'}
+                {activeTab === 'concurrency' && 'Transaction Integrity'}
+                {activeTab === 'performance' && 'National Dispatch Archive'}
               </span>
             </div>
-            {activeTab !== 'intake' && (
+
+            {/* Sub-Menu Switcher & + New Action Buttons for Customers & Policies */}
+            {(activeTab === 'customers' || activeTab === 'policies') && (
+              <div className="action-btn-group">
+                <button
+                  type="button"
+                  className={activeTab === 'customers' ? 'btn-erp-primary' : 'btn-erp-secondary'}
+                  onClick={() => {
+                    setActiveTab('customers');
+                    setCustomerViewMode('list');
+                  }}
+                >
+                  Customers
+                </button>
+                <button
+                  type="button"
+                  className={activeTab === 'policies' ? 'btn-erp-primary' : 'btn-erp-secondary'}
+                  onClick={() => {
+                    setActiveTab('policies');
+                    setPolicyViewMode('list');
+                  }}
+                >
+                  Insurance Policies
+                </button>
+                {activeTab === 'customers' && (
+                  <button
+                    type="button"
+                    className="btn-erp-primary"
+                    onClick={() => setCustomerViewMode('new')}
+                  >
+                    + New Customer
+                  </button>
+                )}
+                {activeTab === 'policies' && (
+                  <button
+                    type="button"
+                    className="btn-erp-primary"
+                    onClick={() => setPolicyViewMode('new')}
+                  >
+                    + New Policy
+                  </button>
+                )}
+              </div>
+            )}
+
+            {activeTab !== 'intake' && activeTab !== 'customers' && activeTab !== 'policies' && (
               <button
                 className="btn-erp-primary"
                 onClick={() => setActiveTab('intake')}
               >
-                + New Dispatch Ticket
+                + New Tow Request
               </button>
             )}
           </div>
 
           <div className="o-cp-right">
-            <div className="o-kpi-strip">
-              <div className="o-kpi-chip">
-                Active Queue:
-                <strong>{(kpis.activeDispatches || 0) + (kpis.pendingDrafts || 0)}</strong>
+            {activeTab === 'customers' ? (
+              <input
+                type="text"
+                className="o-cp-search-input"
+                placeholder="Search customers by name, phone, or email..."
+                value={customerSearch}
+                onChange={e => {
+                  setCustomerSearch(e.target.value);
+                  if (customerViewMode !== 'list') setCustomerViewMode('list');
+                }}
+              />
+            ) : activeTab === 'policies' ? (
+              <input
+                type="text"
+                className="o-cp-search-input"
+                placeholder="Search policies by policy #, customer, phone, or insurer..."
+                value={policySearch}
+                onChange={e => {
+                  setPolicySearch(e.target.value);
+                  if (policyViewMode !== 'list') setPolicyViewMode('list');
+                }}
+              />
+            ) : (
+              <div className="o-kpi-strip">
+                <div className="o-kpi-chip">
+                  Active Queue:
+                  <strong>{(kpis.activeDispatches || 0) + (kpis.pendingDrafts || 0)}</strong>
+                </div>
+                <div className="o-kpi-chip">
+                  Available Trucks:
+                  <strong>{kpis.availableTrucks}</strong>
+                </div>
+                <div className="o-kpi-chip">
+                  Active Policies:
+                  <strong>{kpis.activePolicies?.toLocaleString()}</strong>
+                </div>
               </div>
-              <div className="o-kpi-chip">
-                Available Trucks:
-                <strong>{kpis.availableTrucks}</strong>
-              </div>
-              <div className="o-kpi-chip">
-                Active Policies:
-                <strong>{kpis.activePolicies?.toLocaleString()}</strong>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -1725,185 +1872,130 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: CALL INTAKE, LOCATION PICKER & SEQUENTIAL INSURANCE QUOTAS (erp Form Sheet Style) */}
+        {/* ==========================================================================
+            TAB 2: CALL DESK & TOW REQUEST FORM SHEET (Exact Replica of Form View)
+           ========================================================================== */}
         {activeTab === 'intake' && (
           <div className="o-form-sheet">
-            {/* erp Statusbar Header */}
+            {/* Form Header Bar: Action Buttons on Left, Statusbar on Right */}
             <div className="o-form-statusbar">
               <div className="action-btn-group">
+                <button
+                  type="button"
+                  className="btn-erp-primary"
+                  onClick={e => handleCreateTowRequest(e, true)}
+                >
+                  Approve &amp; Dispatch Truck
+                </button>
+                <button
+                  type="button"
+                  className="btn-erp-secondary"
+                  onClick={e => handleCreateTowRequest(e, false)}
+                >
+                  Save Draft Ticket
+                </button>
+                <button
+                  type="button"
+                  className="btn-erp-secondary"
+                  onClick={e => handleCreateTowRequest(e, false)}
+                >
+                  Put in Pending Insurance
+                </button>
                 <button
                   type="button"
                   className="btn-erp-secondary"
                   onClick={() => setShowPlateModal(true)}
                 >
-                  + Add Plate Letter
-                </button>
-                <button
-                  type="button"
-                  className="btn-erp-secondary"
-                  onClick={() => setShowTierEditor(prev => !prev)}
-                >
-                  {showTierEditor ? 'Hide Quota Tier Editor' : 'Configure Policy Quota Tiers'}
+                  + Plate Letter
                 </button>
               </div>
               <div className="o-statusbar-status">
-                <span className="o-stage-pill current">Draft Intake</span>
+                <span className="o-stage-pill current">Draft Request</span>
                 <span className="o-stage-pill">Pending Insurance</span>
-                <span className="o-stage-pill">Approved</span>
-                <span className="o-stage-pill">In Progress</span>
-                <span className="o-stage-pill">Unable to Load</span>
-                <span className="o-stage-pill">Done</span>
+                <span className="o-stage-pill">Approved &amp; Dispatched</span>
+                <span className="o-stage-pill">Towing in Progress</span>
+                <span className="o-stage-pill">Completed &amp; Billed</span>
               </div>
             </div>
 
-            {/* erp Smart Stat Buttons (.oe_button_box) */}
-            {eligibility && (
-              <div className="oe-button-box">
-                <div className="oe-stat-button">
-                  <span className="oe-stat-icon">KM</span>
-                  <div className="oe-stat-info">
-                    <span className="oe-stat-value">{eligibility.calculatedRoadKm} km</span>
-                    <span className="oe-stat-text">Road Distance</span>
-                  </div>
-                </div>
-                <div className="oe-stat-button">
-                  <span className="oe-stat-icon">MAX</span>
-                  <div className="oe-stat-info">
-                    <span className="oe-stat-value">{eligibility.allowedDistanceKm} km</span>
-                    <span className="oe-stat-text">Covered KM</span>
-                  </div>
-                </div>
-                <div className="oe-stat-button">
-                  <span className="oe-stat-icon">QTY</span>
-                  <div className="oe-stat-info">
-                    <span className="oe-stat-value">
-                      {eligibility.remainingCategoryTows} left
-                    </span>
-                    <span className="oe-stat-text">{eligibility.targetCategory} Quota</span>
-                  </div>
-                </div>
-                <div className="oe-stat-button">
-                  <span className="oe-stat-icon">DAYS</span>
-                  <div className="oe-stat-info">
-                    <span className="oe-stat-value">
-                      {eligibility.requiredCooldownDays} days
-                    </span>
-                    <span className="oe-stat-text">Min Cooldown</span>
-                  </div>
-                </div>
-                <div className="oe-stat-button">
-                  <span className="oe-stat-icon">USD</span>
-                  <div className="oe-stat-info">
-                    <span className="oe-stat-value">${eligibility.overageAmount}</span>
-                    <span className="oe-stat-text">Extra Charge</span>
-                  </div>
-                </div>
+            {/* Form Sheet Body */}
+            <form onSubmit={e => handleCreateTowRequest(e, false)} className="erp-sheet-pad">
+              {/* Top Alert Banner: Policy Status */}
+              <div
+                className={
+                  !intakeForm.hasInsurance
+                    ? 'erp-alert-banner alert-neutral'
+                    : eligibility?.isEligible
+                    ? 'erp-alert-banner alert-ok'
+                    : 'erp-alert-banner alert-warn'
+                }
+              >
+                <strong>Policy Status: </strong>
+                <span>
+                  {!intakeForm.hasInsurance
+                    ? 'Direct Customer Billing (Not Covered by Insurance)'
+                    : eligibility?.statusBanner || 'Evaluating policy quota and cooldown rules...'}
+                </span>
               </div>
-            )}
 
-            <div className="o-sheet-body two-col-grid">
-              <div className="card">
-                <div className="card-header-flex">
-                  <div>
-                    <h3>Call Responder Intake &amp; Dispatch Ticket</h3>
-                    <p className="muted">
-                      Executes <code>dbo.usp_CreateTowRequest</code> with parameterized{' '}
-                      <code>SqlCommand</code> &amp; built-in Google Maps Pin Picker.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn-xs"
-                    onClick={() => setShowPlateModal(true)}
-                  >
-                    + Plate Letter
-                  </button>
-                </div>
+              {/* Document Title (oe_title) */}
+              <div className="erp-oe-title">
+                <span className="erp-oe-label">Tow Request #</span>
+                <h1>New</h1>
+              </div>
 
-              <form onSubmit={handleCreateTowRequest} className="intake-form">
-                <div className="form-row-2">
-                  <div>
-                    <label>1. Select Customer (dbo.Customers)</label>
-                    <select
-                      value={selectedCustomerId}
-                      onChange={e => {
-                        const cid = Number(e.target.value);
-                        handleSelectCustomer(cid);
-                        const cust = customersList.find(c => c.customerId === cid);
-                        if (cust) {
-                          setIntakeForm(prev => ({
-                            ...prev,
-                            callerName: cust.fullName,
-                            callerPhone: cust.phone
-                          }));
-                        }
-                        setTimeout(() => checkEligibility(true), 60);
-                      }}
-                    >
-                      {customersList.map(c => (
-                        <option key={c.customerId} value={c.customerId}>
-                          {c.fullName} ({c.phone}) — {c.policyCount}{' '}
-                          {c.policyCount === 1 ? 'Policy' : 'Policies'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label>
-                      2. Select Customer&apos;s Insurance Policy ({customerPolicies.length} on file)
-                    </label>
-                    <select
-                      value={selectedPolicyId}
-                      onChange={e => {
-                        const pid = Number(e.target.value);
-                        setSelectedPolicyId(pid);
-                        setIntakeForm(prev => ({ ...prev, hasInsurance: pid > 0 }));
-                        if (pid > 0) {
-                          setTimeout(() => checkEligibility(true), 60);
-                        }
-                      }}
-                    >
-                      {customerPolicies.map(p => (
-                        <option key={p.policyId} value={p.policyId}>
-                          {p.policyNumber} — {p.providerName} ({p.defaultAllowedKm} km •{' '}
-                          {p.policyStatus})
-                        </option>
-                      ))}
-                      <option value={0}>No Insurance Policy / Direct Cash Call</option>
-                    </select>
-                  </div>
-                </div>
+              {/* GROUP ROW 1: Customer & Telephony Intake | Vehicle & Breakdown Issue */}
+              <div className="erp-group-grid">
+                <div className="erp-group-col">
+                  <div className="erp-group-header">CUSTOMER &amp; TELEPHONY INTAKE</div>
 
-                <div className="form-row-2">
-                  <div>
-                    <label>Incident Type</label>
-                    <select
-                      value={selectedIncidentType}
-                      onChange={e => {
-                        setSelectedIncidentType(e.target.value);
-                        setTimeout(() => checkEligibility(true), 60);
-                      }}
-                    >
-                      <option value="Mechanical">Mechanical Breakdown</option>
-                      <option value="Accident">Accident Tow</option>
-                      <option value="Winch">Winch / Off-Road Recovery</option>
-                      <option value="FlatTire">Flat Tire</option>
-                      <option value="Battery">Battery Jump</option>
-                    </select>
+                  <div className="erp-field-row">
+                    <label>Customer / Caller</label>
+                    <div className="erp-field-val">
+                      <div className="split-inputs">
+                        <select
+                          value={selectedCustomerId}
+                          onChange={e => {
+                            const cid = Number(e.target.value);
+                            handleSelectCustomer(cid);
+                            const cust = customersList.find(c => c.customerId === cid);
+                            if (cust) {
+                              setIntakeForm(prev => ({
+                                ...prev,
+                                callerName: cust.fullName,
+                                callerPhone: prev.callerPhone || cust.phone
+                              }));
+                            }
+                            setTimeout(() => checkEligibility(true), 60);
+                          }}
+                        >
+                          {customersList.map(c => (
+                            <option key={c.customerId} value={c.customerId}>
+                              {c.fullName} ({c.phone})
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="btn-xs"
+                          title="Manage or Add Customer"
+                          onClick={() => {
+                            setActiveTab('customers');
+                            setCustomerViewMode('new');
+                          }}
+                        >
+                          + New
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label>Caller Name &amp; Phone</label>
-                    <div className="split-inputs">
+
+                  <div className="erp-field-row">
+                    <label>Phone Number</label>
+                    <div className="erp-field-val">
                       <input
                         type="text"
-                        value={intakeForm.callerName}
-                        onChange={e =>
-                          setIntakeForm({ ...intakeForm, callerName: e.target.value })
-                        }
-                        required
-                      />
-                      <input
-                        type="text"
+                        placeholder="Captured Caller Phone Number"
                         value={intakeForm.callerPhone}
                         onChange={e =>
                           setIntakeForm({ ...intakeForm, callerPhone: e.target.value })
@@ -1912,823 +2004,1682 @@ export default function App() {
                       />
                     </div>
                   </div>
-                </div>
 
-                {/* Separate Lebanese Plate Letter + Digits + No Plate Checkbox */}
-                <div className="form-row-2">
-                  <div>
-                    <label>Vehicle Make / Model</label>
-                    <input
-                      type="text"
-                      value={intakeForm.vehicleDesc}
-                      onChange={e =>
-                        setIntakeForm({ ...intakeForm, vehicleDesc: e.target.value })
-                      }
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="checkbox-inline-label">
-                      <span>Lebanese Plate (Letter Required + Digits)</span>
-                      <label className="no-plate-toggle">
+                  <div className="erp-field-row">
+                    <label>Covered by Insurance</label>
+                    <div className="erp-field-val">
+                      <label className="erp-toggle-switch">
                         <input
                           type="checkbox"
-                          checked={intakeForm.noPlate}
-                          onChange={e =>
-                            setIntakeForm({ ...intakeForm, noPlate: e.target.checked })
-                          }
+                          checked={intakeForm.hasInsurance}
+                          onChange={e => {
+                            const checked = e.target.checked;
+                            setIntakeForm({ ...intakeForm, hasInsurance: checked });
+                            if (checked && customerPolicies.length > 0) {
+                              setSelectedPolicyId(customerPolicies[0].policyId);
+                              setTimeout(() => checkEligibility(true), 60);
+                            }
+                          }}
                         />
-                        No Plate
+                        <span>{intakeForm.hasInsurance ? 'Yes — Active Coverage' : 'No — Cash Call'}</span>
                       </label>
-                    </label>
-                    {!intakeForm.noPlate ? (
-                      <div className="split-inputs">
-                        <select
-                          value={intakeForm.plateCodeId}
-                          onChange={e =>
-                            setIntakeForm({ ...intakeForm, plateCodeId: e.target.value })
-                          }
-                          style={{ maxWidth: '150px' }}
-                          required
-                        >
-                          {dashboard?.plateCodes?.map(pc => (
-                            <option key={pc.plateCodeId} value={pc.plateCodeId}>
-                              {pc.code} ({pc.regionDescription.split('/')[0].trim()})
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="text"
-                          value={intakeForm.plateDigits}
-                          onChange={e =>
-                            setIntakeForm({ ...intakeForm, plateDigits: e.target.value })
-                          }
-                          placeholder="Digits (e.g. 149283)"
-                          required
-                        />
-                      </div>
-                    ) : (
-                      <div className="no-plate-banner">
-                        Unregistered / Showroom Vehicle — Will record as <code>NO-PLATE</code>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Pickup Location with Built-in Map Picker Modal */}
-                <div className="form-row">
-                  <div className="label-with-btn">
-                    <label>
-                      Pickup Address ({intakeForm.pickupLat}, {intakeForm.pickupLng})
-                    </label>
-                    <button
-                      type="button"
-                      className="btn-pin-picker"
-                      onClick={() => openLocationPickerModal('pickup')}
-                    >
-                      Drop Pin / Search Map
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Type custom pickup name or leave empty to auto-fill from pin..."
-                    value={intakeForm.pickupAddress}
-                    onChange={e =>
-                      setIntakeForm({ ...intakeForm, pickupAddress: e.target.value })
-                    }
-                    required
-                  />
-                </div>
-
-                {/* Dropoff Location with Built-in Map Picker Modal */}
-                <div className="form-row">
-                  <div className="label-with-btn">
-                    <label>
-                      Dropoff Destination ({intakeForm.dropoffLat}, {intakeForm.dropoffLng})
-                    </label>
-                    <button
-                      type="button"
-                      className="btn-pin-picker"
-                      onClick={() => openLocationPickerModal('dropoff')}
-                    >
-                      Drop Pin / Search Map
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Type custom dropoff name or leave empty to auto-fill from pin..."
-                    value={intakeForm.dropoffAddress}
-                    onChange={e =>
-                      setIntakeForm({ ...intakeForm, dropoffAddress: e.target.value })
-                    }
-                    required
-                  />
-                </div>
-
-                {/* Subcontractor Outsourcing Option */}
-                <div className="subcontractor-box">
-                  <label className="no-plate-toggle">
-                    <input
-                      type="checkbox"
-                      checked={intakeForm.isOutsourced}
-                      onChange={e =>
-                        setIntakeForm({ ...intakeForm, isOutsourced: e.target.checked })
-                      }
-                    />
-                    <strong>Outsource to External Subcontractor Partner</strong>
-                  </label>
-                  {intakeForm.isOutsourced && (
-                    <div className="form-row-2" style={{ marginTop: '8px' }}>
-                      <div>
-                        <label>Subcontractor Name</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Bekaa Rapid Recovery Co."
-                          value={intakeForm.subcontractorName}
-                          onChange={e =>
-                            setIntakeForm({ ...intakeForm, subcontractorName: e.target.value })
-                          }
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label>Agreed Subcontractor Fee ($)</label>
-                        <input
-                          type="number"
-                          step="0.5"
-                          value={intakeForm.subcontractorFee}
-                          onChange={e =>
-                            setIntakeForm({ ...intakeForm, subcontractorFee: e.target.value })
-                          }
-                          required
-                        />
-                      </div>
                     </div>
+                  </div>
+
+                  {intakeForm.hasInsurance && (
+                    <>
+                      <div className="erp-field-row">
+                        <label>Insurance Policy</label>
+                        <div className="erp-field-val">
+                          <select
+                            value={selectedPolicyId}
+                            onChange={e => {
+                              const pid = Number(e.target.value);
+                              setSelectedPolicyId(pid);
+                              setTimeout(() => checkEligibility(true), 60);
+                            }}
+                          >
+                            {customerPolicies.length === 0 ? (
+                              <option value={0}>No Policies Linked to Selected Customer</option>
+                            ) : (
+                              customerPolicies.map(p => (
+                                <option key={p.policyId} value={p.policyId}>
+                                  {p.policyNumber} ({p.providerName} • {p.policyStatus})
+                                </option>
+                              ))
+                            )}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Applied Policy Quota Tier</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="text"
+                            readOnly
+                            className="erp-readonly-input"
+                            value={
+                              eligibility?.matchedTierName
+                                ? `${eligibility.matchedTierName} (${eligibility.remainingCategoryTows} remaining • Max ${eligibility.allowedDistanceKm} KM)`
+                                : 'No Matching Tier Available'
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Insurance Provider</label>
+                        <div className="erp-field-val">
+                          <span className="erp-readonly-text">
+                            {selectedPolicyObj?.providerName || '—'}
+                          </span>
+                        </div>
+                      </div>
+                    </>
                   )}
                 </div>
 
-                <div className="form-row">
-                  <label>Dispatcher Notes</label>
-                  <input
-                    type="text"
-                    value={intakeForm.notes}
-                    onChange={e => setIntakeForm({ ...intakeForm, notes: e.target.value })}
-                  />
-                </div>
+                <div className="erp-group-col">
+                  <div className="erp-group-header">VEHICLE &amp; BREAKDOWN ISSUE</div>
 
-                <button type="submit" className="btn-primary">
-                  + Create Tow Request in SQL Server
-                </button>
-              </form>
-            </div>
-
-            {/* Right Panel: Live Eligibility Preview + Link to Standalone Policies Section */}
-            <div className="card">
-              <div className="card-header-flex">
-                <div>
-                  <h3>Live Policy Quota &amp; Cooldown Evaluation</h3>
-                  <p className="muted">
-                    Evaluated by <code>dbo.tvf_CheckPolicyEligibility</code> &amp; OSRM /{' '}
-                    <code>dbo.fn_CalculateRoadDistanceKm</code>
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="btn-erp-primary"
-                  onClick={() => setActiveTab('policies')}
-                >
-                  Manage Insurance Policies
-                </button>
-              </div>
-
-              {eligibility ? (
-                <div className="eligibility-box">
-                  <div
-                    className={`elig-banner ${
-                      eligibility.isEligible ? 'elig-ok' : 'elig-blocked'
-                    }`}
-                  >
-                    <h4>
-                      {eligibility.isEligible
-                        ? 'POLICY ELIGIBLE FOR COVERAGE'
-                        : 'POLICY QUOTA / COOLDOWN BLOCKED'}
-                    </h4>
-                    <p>{eligibility.statusBanner}</p>
+                  <div className="erp-field-row">
+                    <label>License Plate</label>
+                    <div className="erp-field-val">
+                      <div className="erp-plate-flex">
+                        {!intakeForm.noPlate && (
+                          <>
+                            <select
+                              value={intakeForm.plateCodeId}
+                              onChange={e =>
+                                setIntakeForm({ ...intakeForm, plateCodeId: e.target.value })
+                              }
+                              style={{ width: '130px', flexShrink: 0 }}
+                              required={!intakeForm.noPlate}
+                            >
+                              {dashboard?.plateCodes?.map(pc => (
+                                <option key={pc.plateCodeId} value={pc.plateCodeId}>
+                                  {pc.code} ({pc.regionDescription.split('/')[0].trim()})
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="text"
+                              placeholder="e.g. 452100"
+                              value={intakeForm.plateDigits}
+                              onChange={e =>
+                                setIntakeForm({ ...intakeForm, plateDigits: e.target.value })
+                              }
+                              required={!intakeForm.noPlate}
+                            />
+                          </>
+                        )}
+                        <label className="erp-toggle-switch" style={{ whiteSpace: 'nowrap' }}>
+                          <input
+                            type="checkbox"
+                            checked={intakeForm.noPlate}
+                            onChange={e =>
+                              setIntakeForm({ ...intakeForm, noPlate: e.target.checked })
+                            }
+                          />
+                          <span>No Plate</span>
+                        </label>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="elig-metrics">
-                    <div className="metric-item">
-                      <span>Matched Tier</span>
-                      <strong>{eligibility.matchedTierName || 'None'}</strong>
-                    </div>
-                    <div className="metric-item">
-                      <span>Road Distance (OSRM/SQL)</span>
-                      <strong>{eligibility.calculatedRoadKm} km</strong>
-                    </div>
-                    <div className="metric-item">
-                      <span>Covered Distance</span>
-                      <strong>{eligibility.allowedDistanceKm} km</strong>
-                    </div>
-                    <div className="metric-item">
-                      <span>Overage Extra Charge</span>
-                      <strong
-                        className={eligibility.overageAmount > 0 ? 'text-red' : 'text-green'}
-                      >
-                        ${eligibility.overageAmount} ({eligibility.overageKm} km over)
+                  <div className="erp-field-row">
+                    <label>Combined Plate</label>
+                    <div className="erp-field-val">
+                      <strong className="erp-combined-plate">
+                        {intakeForm.noPlate
+                          ? 'NO-PLATE'
+                          : `${
+                              dashboard?.plateCodes?.find(
+                                pc => pc.plateCodeId === Number(intakeForm.plateCodeId)
+                              )?.code || 'M'
+                            } ${intakeForm.plateDigits || '—'}`}
                       </strong>
                     </div>
-                    <div className="metric-item">
-                      <span>Remaining ({eligibility.targetCategory})</span>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Car Make / Model</label>
+                    <div className="erp-field-val">
+                      <input
+                        type="text"
+                        placeholder="e.g. BMW 520i / Toyota Camry"
+                        value={intakeForm.vehicleDesc}
+                        onChange={e =>
+                          setIntakeForm({ ...intakeForm, vehicleDesc: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Breakdown Issue</label>
+                    <div className="erp-field-val">
+                      <select
+                        value={selectedIncidentType}
+                        onChange={e => {
+                          setSelectedIncidentType(e.target.value);
+                          setTimeout(() => checkEligibility(true), 60);
+                        }}
+                      >
+                        <option value="Mechanical">Mechanical Breakdown</option>
+                        <option value="Accident">Accident Tow</option>
+                        <option value="Battery">Dead Battery</option>
+                        <option value="FlatTire">Flat Tire</option>
+                        <option value="Winch">Ditch / Winch Extraction</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Problem Notes</label>
+                    <div className="erp-field-val">
+                      <input
+                        type="text"
+                        placeholder="Details of the breakdown..."
+                        value={intakeForm.notes}
+                        onChange={e => setIntakeForm({ ...intakeForm, notes: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* GROUP ROW 2: Pickup & Destination Coordinates */}
+              <div className="erp-group-grid">
+                <div className="erp-group-col">
+                  <div className="erp-group-header">PICKUP BREAKDOWN LOCATION</div>
+
+                  <div className="erp-field-row">
+                    <label>Pickup Breakdown Location</label>
+                    <div className="erp-field-val">
+                      <div className="split-inputs">
+                        <input
+                          type="text"
+                          placeholder="Breakdown Location (Where the car is)"
+                          value={intakeForm.pickupAddress}
+                          onChange={e =>
+                            setIntakeForm({ ...intakeForm, pickupAddress: e.target.value })
+                          }
+                          required
+                        />
+                        <button
+                          type="button"
+                          className="btn-pin-picker"
+                          onClick={() => openLocationPickerModal('pickup')}
+                        >
+                          Drop Pin / Search
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Pickup Latitude</label>
+                    <div className="erp-field-val">
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={intakeForm.pickupLat}
+                        onChange={e =>
+                          setIntakeForm({ ...intakeForm, pickupLat: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Pickup Longitude</label>
+                    <div className="erp-field-val">
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={intakeForm.pickupLng}
+                        onChange={e =>
+                          setIntakeForm({ ...intakeForm, pickupLng: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="erp-group-col">
+                  <div className="erp-group-header">DESTINATION / DROPOFF</div>
+
+                  <div className="erp-field-row">
+                    <label>Destination / Dropoff</label>
+                    <div className="erp-field-val">
+                      <div className="split-inputs">
+                        <input
+                          type="text"
+                          placeholder="Dropoff Location (Garage / Home)"
+                          value={intakeForm.dropoffAddress}
+                          onChange={e =>
+                            setIntakeForm({ ...intakeForm, dropoffAddress: e.target.value })
+                          }
+                          required
+                        />
+                        <button
+                          type="button"
+                          className="btn-pin-picker"
+                          onClick={() => openLocationPickerModal('dropoff')}
+                        >
+                          Drop Pin / Search
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Dropoff Latitude</label>
+                    <div className="erp-field-val">
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={intakeForm.dropoffLat}
+                        onChange={e =>
+                          setIntakeForm({ ...intakeForm, dropoffLat: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Dropoff Longitude</label>
+                    <div className="erp-field-val">
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={intakeForm.dropoffLng}
+                        onChange={e =>
+                          setIntakeForm({ ...intakeForm, dropoffLng: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* GROUP ROW 3: Distance & Overage Billing Calculation */}
+              <div className="erp-group-grid">
+                <div className="erp-group-col">
+                  <div className="erp-group-header">DISTANCE &amp; OVERAGE BILLING CALCULATION</div>
+
+                  <div className="erp-field-row">
+                    <label>Actual Trip Distance (KM)</label>
+                    <div className="erp-field-val">
+                      <strong>{eligibility?.calculatedRoadKm ?? 0} KM</strong>
+                    </div>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Allowed Policy Distance (KM)</label>
+                    <div className="erp-field-val">
+                      <span>
+                        {intakeForm.hasInsurance ? `${eligibility?.allowedDistanceKm ?? 0} KM` : '0 KM'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="erp-group-col">
+                  <div className="erp-group-header">OVERAGE &amp; EXCESS FEE</div>
+
+                  <div className="erp-field-row">
+                    <label>Excess KM to Bill</label>
+                    <div className="erp-field-val">
+                      <span>{eligibility?.overageKm ?? 0} KM</span>
+                    </div>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Excess Rate ($/KM)</label>
+                    <div className="erp-field-val">
+                      <span>$2.00 / KM</span>
+                    </div>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Total Excess Amount to Bill ($)</label>
+                    <div className="erp-field-val">
                       <strong
                         className={
-                          eligibility.remainingCategoryTows <= 0 ? 'text-red' : 'text-green'
+                          (eligibility?.overageAmount || 0) > 0 ? 'text-red' : 'text-green'
                         }
+                        style={{ fontSize: '15px' }}
                       >
-                        {eligibility.remainingCategoryTows} tows
+                        ${eligibility?.overageAmount ?? 0}
                       </strong>
-                    </div>
-                    <div className="metric-item">
-                      <span>Days Since Last Tow</span>
-                      <strong>{eligibility.daysSinceLastTow ?? 'No prior'} days</strong>
-                    </div>
-                    <div className="metric-item">
-                      <span>Required Cooldown</span>
-                      <strong>{eligibility.requiredCooldownDays} days</strong>
                     </div>
                   </div>
                 </div>
-              ) : (
-                <p>Evaluating policy...</p>
-              )}
+              </div>
 
-              {/* Compact Summary of Selected Policy Tiers */}
-              <div className="tiers-section">
-                <div className="card-header-flex" style={{ marginBottom: '8px' }}>
-                  <h4>
-                    Active Quota Tiers for <code>{selectedPolicyObj?.policyNumber}</code>
-                  </h4>
+              {/* GROUP ROW 4: Dispatching & Resources | On-Scene Cash & Overtime Tracking */}
+              <div className="erp-group-grid">
+                <div className="erp-group-col">
+                  <div className="erp-group-header">DISPATCHING &amp; RESOURCES</div>
+
+                  <div className="erp-field-row">
+                    <label>Outsource to Subcontractor</label>
+                    <div className="erp-field-val">
+                      <label className="erp-toggle-switch">
+                        <input
+                          type="checkbox"
+                          checked={intakeForm.isOutsourced}
+                          onChange={e =>
+                            setIntakeForm({ ...intakeForm, isOutsourced: e.target.checked })
+                          }
+                        />
+                        <span>
+                          {intakeForm.isOutsourced
+                            ? 'External Subcontractor Partner'
+                            : 'Internal Fleet Tow Truck'}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {!intakeForm.isOutsourced ? (
+                    <>
+                      <div className="erp-field-row">
+                        <label>Assigned Tow Truck</label>
+                        <div className="erp-field-val">
+                          <select
+                            value={intakeForm.assignedTruckId}
+                            onChange={e =>
+                              setIntakeForm({ ...intakeForm, assignedTruckId: e.target.value })
+                            }
+                          >
+                            <option value="">Choose internal tow truck...</option>
+                            {dashboard?.trucks?.map(t => (
+                              <option key={t.truckId} value={t.truckId}>
+                                {t.truckCode} — {t.licensePlate} ({t.fleetStatus})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Priority Stop Order</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="number"
+                            value={intakeForm.prioritySequence}
+                            onChange={e =>
+                              setIntakeForm({
+                                ...intakeForm,
+                                prioritySequence: Number(e.target.value)
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Assigned Driver</label>
+                        <div className="erp-field-val">
+                          <span className="erp-readonly-text">
+                            {dashboard?.trucks?.find(
+                              t => t.truckId === Number(intakeForm.assignedTruckId)
+                            )?.driverName || 'Auto-assigned on dispatch'}
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="erp-field-row">
+                        <label>Subcontractor Partner</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="text"
+                            placeholder="Choose external partner..."
+                            value={intakeForm.subcontractorName}
+                            onChange={e =>
+                              setIntakeForm({
+                                ...intakeForm,
+                                subcontractorName: e.target.value
+                              })
+                            }
+                            required={intakeForm.isOutsourced}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Agreed Subcontractor Fee ($)</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="number"
+                            step="0.5"
+                            value={intakeForm.subcontractorFee}
+                            onChange={e =>
+                              setIntakeForm({
+                                ...intakeForm,
+                                subcontractorFee: e.target.value
+                              })
+                            }
+                            required={intakeForm.isOutsourced}
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="erp-group-col">
+                  <div className="erp-group-header">ON-SCENE CASH &amp; OVERTIME TRACKING</div>
+
+                  <div className="erp-field-row">
+                    <label>Cash Collected by Driver ($)</label>
+                    <div className="erp-field-val">
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={intakeForm.cashCollected}
+                        onChange={e =>
+                          setIntakeForm({ ...intakeForm, cashCollected: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="erp-field-row">
+                    <label>Night Shift Tow (19:00 - 07:00)</label>
+                    <div className="erp-field-val">
+                      <label className="erp-toggle-switch">
+                        <input
+                          type="checkbox"
+                          checked={intakeForm.isNightShift}
+                          onChange={e =>
+                            setIntakeForm({ ...intakeForm, isNightShift: e.target.checked })
+                          }
+                        />
+                        <span>Night / Off-Day Overtime Applicable</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* BOTTOM NOTEBOOK (<notebook>) */}
+              <div className="erp-notebook">
+                <div className="erp-notebook-tabs">
                   <button
                     type="button"
-                    className="btn-xs"
-                    onClick={() => setActiveTab('policies')}
+                    className={
+                      intakeNotebookTab === 'map' ? 'erp-nb-tab active' : 'erp-nb-tab'
+                    }
+                    onClick={() => setIntakeNotebookTab('map')}
                   >
-                    + New Policy / Edit Quotas
+                    Built-in Live Incident &amp; Fleet Map
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      intakeNotebookTab === 'tiers' ? 'erp-nb-tab active' : 'erp-nb-tab'
+                    }
+                    onClick={() => setIntakeNotebookTab('tiers')}
+                  >
+                    Policy Quota Tiers ({selectedPolicyObj?.policyNumber || 'None'})
                   </button>
                 </div>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Seq</th>
-                      <th>Coverage Type</th>
-                      <th>Used / Allowed</th>
-                      <th>Remaining</th>
-                      <th>Max Dist (km)</th>
-                      <th>Cooldown</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedPolicyTiers.map(tier => (
-                      <tr key={tier.quotaTierId}>
-                        <td>
-                          <span className="seq-badge">#{tier.tierSequence}</span>
-                        </td>
-                        <td>
-                          <strong>{tier.coverageType}</strong>
-                        </td>
-                        <td>
-                          {tier.usedTows} / {tier.allowedTows}
-                        </td>
-                        <td>
-                          <strong
-                            className={tier.remainingTows <= 0 ? 'text-red' : 'text-green'}
-                          >
-                            {tier.remainingTows}
-                          </strong>
-                        </td>
-                        <td>{tier.maxDistanceKm} km</td>
-                        <td>
-                          <span className="badge badge-PendingInsurance">
-                            {tier.minIntervalDays} days
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+
+                <div className="erp-notebook-page">
+                  {intakeNotebookTab === 'map' ? (
+                    <div style={{ height: '340px', position: 'relative', borderRadius: '6px', overflow: 'hidden' }}>
+                      <GoogleCadMap
+                        centerLat={Number(intakeForm.pickupLat) || BEIRUT_LAT}
+                        centerLng={Number(intakeForm.pickupLng) || BEIRUT_LNG}
+                        initialZoom={12}
+                        trafficEnabled={trafficEnabled}
+                        trucks={dashboard?.trucks || []}
+                        priorityQueue={dashboard?.priorityQueue || []}
+                        activeJobs={[
+                          {
+                            towRequestId: 999999,
+                            requestNumber: 'NEW-CALL',
+                            customerName:
+                              selectedCustomerObj?.fullName || intakeForm.callerName || 'Caller',
+                            vehiclePlate: intakeForm.noPlate
+                              ? 'NO-PLATE'
+                              : intakeForm.plateDigits || 'NEW',
+                            vehicleModel: intakeForm.vehicleDesc || 'Vehicle',
+                            issueType: selectedIncidentType,
+                            pickupAddress: intakeForm.pickupAddress || 'Pickup Pin',
+                            pickupLat: Number(intakeForm.pickupLat) || BEIRUT_LAT,
+                            pickupLng: Number(intakeForm.pickupLng) || BEIRUT_LNG,
+                            destinationAddress: intakeForm.dropoffAddress || 'Destination Pin',
+                            destinationLat: Number(intakeForm.dropoffLat) || 33.894,
+                            destinationLng: Number(intakeForm.dropoffLng) || 35.552,
+                            actualDistanceKm: eligibility?.calculatedRoadKm || 0,
+                            allowedDistanceKm: eligibility?.allowedDistanceKm || 0,
+                            overageKm: eligibility?.overageKm || 0,
+                            overageAmount: eligibility?.overageAmount || 0,
+                            status: 'Draft'
+                          }
+                        ]}
+                      />
+                    </div>
+                  ) : (
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Seq</th>
+                          <th>Coverage Type</th>
+                          <th>Used / Allowed</th>
+                          <th>Remaining</th>
+                          <th>Max Dist (KM)</th>
+                          <th>Min Days Between Tows</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedPolicyTiers.map(tier => (
+                          <tr key={tier.quotaTierId}>
+                            <td>#{tier.tierSequence}</td>
+                            <td>
+                              <strong>{tier.coverageType}</strong>
+                            </td>
+                            <td>
+                              {tier.usedTows} / {tier.allowedTows}
+                            </td>
+                            <td>
+                              <strong
+                                className={tier.remainingTows <= 0 ? 'text-red' : 'text-green'}
+                              >
+                                {tier.remainingTows}
+                              </strong>
+                            </td>
+                            <td>{tier.maxDistanceKm} KM</td>
+                            <td>{tier.minIntervalDays} days</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
               </div>
-            </div>
-            </div>
+            </form>
           </div>
         )}
 
-        {/* STANDALONE TAB: INSURANCE POLICIES FILLING & SEQUENTIAL QUOTA TIER MANAGEMENT */}
-        {activeTab === 'policies' && (
-          <div className="grid-2">
-            {/* Left Column: 1) Register Customer (dbo.Customers) + 2) Attach New Policy to Customer (1:N) */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div className="card">
-                <div className="card-header-flex">
+        {/* ==========================================================================
+            SUB-SECTION 1: CUSTOMERS DIRECTORY (Search List, Customer Sheet, + New)
+           ========================================================================== */}
+        {activeTab === 'customers' && (
+          <div className="o-form-sheet">
+            {customerViewMode === 'list' && (
+              <div className="erp-sheet-pad">
+                <div className="card-header-flex" style={{ marginBottom: '12px' }}>
                   <div>
-                    <h3>1. Register New Customer (dbo.Customers)</h3>
+                    <h3>Customers Directory</h3>
                     <p className="muted">
-                      Customers are stored separately in <code>dbo.Customers</code> so one customer
-                      can hold multiple policies in <code>dbo.InsurancePolicies</code> (1:N).
+                      Click any customer to inspect their contact record and all linked insurance
+                      policies (1:N), or click <strong>+ New Customer</strong> to register a new
+                      customer.
                     </p>
                   </div>
-                  <span className="seq-badge">1:N Parent Entity</span>
                 </div>
 
-                <form onSubmit={handleCreateCustomer} className="intake-form">
-                  <div className="form-row-3">
-                    <div>
-                      <label>Customer Full Name</label>
-                      <input
-                        type="text"
-                        placeholder="e.g., Rami Kanaan"
-                        value={newCustomerForm.fullName}
-                        onChange={e =>
-                          setNewCustomerForm({ ...newCustomerForm, fullName: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label>Customer Phone (Unique)</label>
-                      <input
-                        type="text"
-                        placeholder="+961-03-889900"
-                        value={newCustomerForm.phone}
-                        onChange={e =>
-                          setNewCustomerForm({ ...newCustomerForm, phone: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label>Customer Email</label>
-                      <input
-                        type="email"
-                        placeholder="customer@domain.com"
-                        value={newCustomerForm.email}
-                        onChange={e =>
-                          setNewCustomerForm({ ...newCustomerForm, email: e.target.value })
-                        }
-                      />
-                    </div>
-                  </div>
-                  <button type="submit" className="btn-erp-primary">
-                    + Register Customer in dbo.Customers
-                  </button>
-                </form>
-              </div>
-
-              <div className="card">
-                <div className="card-header-flex">
-                  <div>
-                    <h3>2. Attach New Insurance Policy to Customer</h3>
-                    <p className="muted">
-                      Links a new policy in <code>dbo.InsurancePolicies</code> and sequential quota
-                      tiers in <code>dbo.PolicyQuotaTiers</code> to the selected customer.
-                    </p>
-                  </div>
-                  <span className="seq-badge">ACID Transaction</span>
-                </div>
-
-                <form onSubmit={handleCreatePolicy} className="intake-form">
-                  <div className="form-row">
-                    <label>Select Customer (Can Hold Multiple Policies)</label>
-                    <select
-                      value={newPolicyForm.customerId || selectedCustomerId}
-                      onChange={e => {
-                        const cid = Number(e.target.value);
-                        setNewPolicyForm({ ...newPolicyForm, customerId: cid });
-                        handleSelectCustomer(cid);
-                      }}
-                    >
-                      {customersList.map(c => (
-                        <option key={c.customerId} value={c.customerId}>
-                          #{c.customerId} — {c.fullName} ({c.phone}) • Currently {c.policyCount}{' '}
-                          {c.policyCount === 1 ? 'Policy' : 'Policies'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="form-row-2">
-                    <div>
-                      <label>Insurance Provider</label>
-                      <select
-                        value={newPolicyForm.providerId}
-                        onChange={e =>
-                          setNewPolicyForm({
-                            ...newPolicyForm,
-                            providerId: Number(e.target.value)
-                          })
-                        }
-                      >
-                        <option value={1}>Allianz SNA Lebanon (ALLIANZ-LB)</option>
-                        <option value={2}>Bankers Assurance SAL (BANKERS-LB)</option>
-                        <option value={3}>AXA Middle East SAL (AXA-ME)</option>
-                        <option value={4}>Medgulf Insurance SAL (MEDGULF-LB)</option>
-                        <option value={5}>Fidelity Insurance Group (FIDELITY-LB)</option>
-                        <option value={6}>LIA Assurex SAL (LIA-LB)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label>Policy Number (Unique)</label>
-                      <input
-                        type="text"
-                        placeholder="e.g., POL-2026-09999"
-                        value={newPolicyForm.policyNumber}
-                        onChange={e =>
-                          setNewPolicyForm({ ...newPolicyForm, policyNumber: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-row-3">
-                    <div>
-                      <label>Effective Start Date</label>
-                      <input
-                        type="date"
-                        value={newPolicyForm.startDate}
-                        onChange={e =>
-                          setNewPolicyForm({ ...newPolicyForm, startDate: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label>Expiration Date</label>
-                      <input
-                        type="date"
-                        value={newPolicyForm.expirationDate}
-                        onChange={e =>
-                          setNewPolicyForm({ ...newPolicyForm, expirationDate: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label>Max Covered Distance (km)</label>
-                      <input
-                        type="number"
-                        min="5"
-                        max="500"
-                        value={newPolicyForm.defaultAllowedKm}
-                        onChange={e =>
-                          setNewPolicyForm({
-                            ...newPolicyForm,
-                            defaultAllowedKm: Number(e.target.value)
-                          })
-                        }
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="tier-edit-box" style={{ marginTop: '4px' }}>
-                    <h5>Initial Sequential Quota Tiers &amp; Cooldown Rules</h5>
-                    <div className="form-row-2" style={{ marginTop: '8px' }}>
-                      <div>
-                        <label>Tier #1 — Mechanical Breakdown Allowed Tows</label>
-                        <input
-                          type="number"
-                          min="0"
-                          max="20"
-                          value={newPolicyForm.mechanicalAllowedTows}
-                          onChange={e =>
-                            setNewPolicyForm({
-                              ...newPolicyForm,
-                              mechanicalAllowedTows: Number(e.target.value)
-                            })
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label>Tier #1 — Mechanical Cooldown Interval (Days)</label>
-                        <input
-                          type="number"
-                          min="0"
-                          max="365"
-                          value={newPolicyForm.mechanicalCooldownDays}
-                          onChange={e =>
-                            setNewPolicyForm({
-                              ...newPolicyForm,
-                              mechanicalCooldownDays: Number(e.target.value)
-                            })
-                          }
-                        />
-                      </div>
-                    </div>
-
-                    <div className="form-row-2" style={{ marginTop: '8px' }}>
-                      <div>
-                        <label>Tier #2 — Accident Recovery Allowed Tows</label>
-                        <input
-                          type="number"
-                          min="0"
-                          max="20"
-                          value={newPolicyForm.accidentAllowedTows}
-                          onChange={e =>
-                            setNewPolicyForm({
-                              ...newPolicyForm,
-                              accidentAllowedTows: Number(e.target.value)
-                            })
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label>Tier #2 — Accident Cooldown Interval (Days)</label>
-                        <input
-                          type="number"
-                          min="0"
-                          max="365"
-                          value={newPolicyForm.accidentCooldownDays}
-                          onChange={e =>
-                            setNewPolicyForm({
-                              ...newPolicyForm,
-                              accidentCooldownDays: Number(e.target.value)
-                            })
-                          }
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <button type="submit" className="btn-primary">
-                    + Attach New Insurance Policy to {selectedCustomerObj?.fullName || 'Customer'}
-                  </button>
-                </form>
-              </div>
-            </div>
-
-            {/* Right Column: Filter by Customer -> Select One of Their Policies -> Edit Sequential Tiers */}
-            <div className="card">
-              <div className="card-header-flex">
-                <div>
-                  <h3>Customer Policies &amp; Sequential Quota Tier Editor</h3>
-                  <p className="muted">
-                    Select a customer to view all of their insurance policies (1:N), then select any
-                    policy to configure its <code>dbo.PolicyQuotaTiers</code> rules.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="btn-xs"
-                  onClick={() => setShowTierEditor(prev => !prev)}
-                >
-                  {showTierEditor ? 'Hide Tier Editor' : 'Show Tier Editor'}
-                </button>
-              </div>
-
-              <div className="form-row-2" style={{ marginBottom: '12px' }}>
-                <div>
-                  <label>1. Select Customer (dbo.Customers)</label>
-                  <select
-                    value={selectedCustomerId}
-                    onChange={e => {
-                      handleSelectCustomer(Number(e.target.value));
-                      setEditingTier(null);
-                    }}
-                  >
-                    {customersList.map(c => (
-                      <option key={c.customerId} value={c.customerId}>
-                        {c.fullName} ({c.phone}) — {c.policyCount}{' '}
-                        {c.policyCount === 1 ? 'Policy' : 'Policies'}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label>
-                    2. Select Policy of {selectedCustomerObj?.fullName || 'Customer'} (
-                    {customerPolicies.length} Policies)
-                  </label>
-                  <select
-                    value={selectedPolicyId}
-                    onChange={e => {
-                      const pid = Number(e.target.value);
-                      setSelectedPolicyId(pid);
-                      setEditingTier(null);
-                    }}
-                  >
-                    {customerPolicies.map(p => (
-                      <option key={p.policyId} value={p.policyId}>
-                        {p.policyNumber} — {p.providerName} ({p.defaultAllowedKm} km • Exp:{' '}
-                        {p.expirationDate?.slice(0, 10)})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {selectedPolicyObj && (
-                <div className="elig-metrics" style={{ marginBottom: '14px' }}>
-                  <div className="metric-item">
-                    <span>Policy Number</span>
-                    <strong>{selectedPolicyObj.policyNumber}</strong>
-                  </div>
-                  <div className="metric-item">
-                    <span>Customer</span>
-                    <strong>{selectedPolicyObj.customerName}</strong>
-                  </div>
-                  <div className="metric-item">
-                    <span>Phone</span>
-                    <strong>{selectedPolicyObj.customerPhone}</strong>
-                  </div>
-                  <div className="metric-item">
-                    <span>Provider</span>
-                    <strong>{selectedPolicyObj.providerName}</strong>
-                  </div>
-                  <div className="metric-item">
-                    <span>Max Free Tow</span>
-                    <strong>{selectedPolicyObj.defaultAllowedKm} km</strong>
-                  </div>
-                  <div className="metric-item">
-                    <span>Status</span>
-                    <strong>{selectedPolicyObj.policyStatus}</strong>
-                  </div>
-                </div>
-              )}
-
-              <div className="tiers-section" style={{ marginTop: 0, borderTop: 'none', paddingTop: 0 }}>
-                <h4>
-                  Sequential Quota Tiers for <code>{selectedPolicyObj?.policyNumber}</code>
-                </h4>
-                <p className="muted">
-                  Configure allowed tows, max covered distance (km), and{' '}
-                  <strong>minimum cooldown interval (days) between tows</strong>.
-                </p>
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Seq</th>
-                      <th>Coverage Type</th>
-                      <th>Used / Allowed</th>
-                      <th>Remaining</th>
-                      <th>Max Dist (km)</th>
-                      <th>Cooldown (Days)</th>
-                      <th>Edit</th>
+                      <th>ID</th>
+                      <th>Customer Full Name</th>
+                      <th>Phone Number</th>
+                      <th>Email Address</th>
+                      <th>Linked Insurance Policies</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedPolicyTiers.map(tier => (
-                      <tr key={tier.quotaTierId}>
-                        <td>
-                          <span className="seq-badge">#{tier.tierSequence}</span>
-                        </td>
-                        <td>
-                          <strong>{tier.coverageType}</strong>
-                        </td>
-                        <td>
-                          {tier.usedTows} / {tier.allowedTows}
-                        </td>
-                        <td>
-                          <strong
-                            className={tier.remainingTows <= 0 ? 'text-red' : 'text-green'}
-                          >
-                            {tier.remainingTows}
-                          </strong>
-                        </td>
-                        <td>{tier.maxDistanceKm} km</td>
-                        <td>
-                          <span className="badge badge-PendingInsurance">
-                            {tier.minIntervalDays} days
-                          </span>
-                        </td>
-                        <td>
-                          <button
-                            className="btn-xs"
-                            onClick={() => setEditingTier({ ...tier })}
-                          >
-                            Edit
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {customersList
+                      .filter(c => {
+                        const q = customerSearch.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          c.fullName.toLowerCase().includes(q) ||
+                          c.phone.toLowerCase().includes(q) ||
+                          (c.email || '').toLowerCase().includes(q)
+                        );
+                      })
+                      .map(c => (
+                        <tr
+                          key={c.customerId}
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => {
+                            handleSelectCustomer(c.customerId);
+                            setCustomerViewMode('form');
+                          }}
+                        >
+                          <td>#{c.customerId}</td>
+                          <td>
+                            <strong>{c.fullName}</strong>
+                          </td>
+                          <td>{c.phone}</td>
+                          <td>{c.email || '—'}</td>
+                          <td>
+                            <span className="badge badge-Approved">
+                              {c.policyCount} {c.policyCount === 1 ? 'Policy' : 'Policies'}
+                            </span>
+                          </td>
+                          <td onClick={e => e.stopPropagation()}>
+                            <div className="action-btn-group">
+                              <button
+                                type="button"
+                                className="btn-xs"
+                                onClick={() => {
+                                  handleSelectCustomer(c.customerId);
+                                  setCustomerViewMode('form');
+                                }}
+                              >
+                                View Customer
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-xs"
+                                onClick={() => {
+                                  handleSelectCustomer(c.customerId);
+                                  setNewPolicyForm(prev => ({
+                                    ...prev,
+                                    customerId: c.customerId
+                                  }));
+                                  setActiveTab('policies');
+                                  setPolicyViewMode('new');
+                                }}
+                              >
+                                + Add Policy
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
+              </div>
+            )}
 
-                {/* Inline Editor for Selected Tier */}
-                {editingTier && (
-                  <div className="tier-edit-box">
-                    <h5>
-                      Edit Tier #{editingTier.tierSequence} ({editingTier.coverageType})
-                    </h5>
-                    <div className="form-row-3">
-                      <div>
-                        <label>Allowed Tows</label>
-                        <input
-                          type="number"
-                          value={editingTier.allowedTows}
-                          onChange={e =>
-                            setEditingTier({
-                              ...editingTier,
-                              allowedTows: Number(e.target.value)
-                            })
-                          }
-                        />
+            {customerViewMode === 'form' && selectedCustomerObj && (
+              <>
+                <div className="o-form-statusbar">
+                  <div className="action-btn-group">
+                    <button
+                      type="button"
+                      className="btn-erp-secondary"
+                      onClick={() => setCustomerViewMode('list')}
+                    >
+                      ← Back to Customers List
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-erp-primary"
+                      onClick={() => {
+                        setNewPolicyForm(prev => ({
+                          ...prev,
+                          customerId: selectedCustomerObj.customerId
+                        }));
+                        setActiveTab('policies');
+                        setPolicyViewMode('new');
+                      }}
+                    >
+                      + Attach New Policy to {selectedCustomerObj.fullName}
+                    </button>
+                  </div>
+                  <div className="o-statusbar-status">
+                    <span className="o-stage-pill current">Active Customer</span>
+                  </div>
+                </div>
+
+                <div className="erp-sheet-pad">
+                  <div className="erp-oe-title">
+                    <span className="erp-oe-label">Customer Record #{selectedCustomerObj.customerId}</span>
+                    <h1>{selectedCustomerObj.fullName}</h1>
+                  </div>
+
+                  <div className="erp-group-grid">
+                    <div className="erp-group-col">
+                      <div className="erp-group-header">CONTACT INFORMATION</div>
+                      <div className="erp-field-row">
+                        <label>Full Name</label>
+                        <div className="erp-field-val">
+                          <strong>{selectedCustomerObj.fullName}</strong>
+                        </div>
                       </div>
-                      <div>
-                        <label>Max Distance (km)</label>
-                        <input
-                          type="number"
-                          value={editingTier.maxDistanceKm}
-                          onChange={e =>
-                            setEditingTier({
-                              ...editingTier,
-                              maxDistanceKm: Number(e.target.value)
-                            })
-                          }
-                        />
+                      <div className="erp-field-row">
+                        <label>Phone Number</label>
+                        <div className="erp-field-val">
+                          <span>{selectedCustomerObj.phone}</span>
+                        </div>
                       </div>
-                      <div>
-                        <label>Cooldown Interval (Days)</label>
-                        <input
-                          type="number"
-                          value={editingTier.minIntervalDays}
-                          onChange={e =>
-                            setEditingTier({
-                              ...editingTier,
-                              minIntervalDays: Number(e.target.value)
-                            })
-                          }
-                        />
+                      <div className="erp-field-row">
+                        <label>Email Address</label>
+                        <div className="erp-field-val">
+                          <span>{selectedCustomerObj.email || '—'}</span>
+                        </div>
                       </div>
                     </div>
-                    <div className="modal-actions" style={{ marginTop: '8px' }}>
-                      <button
-                        className="btn-primary"
-                        onClick={() => handleUpdateTier(editingTier)}
-                      >
-                        Save Tier Rule
-                      </button>
-                      <button className="btn-secondary" onClick={() => setEditingTier(null)}>
-                        Cancel
-                      </button>
+
+                    <div className="erp-group-col">
+                      <div className="erp-group-header">INSURANCE PORTFOLIO SUMMARY</div>
+                      <div className="erp-field-row">
+                        <label>Active Policies Count</label>
+                        <div className="erp-field-val">
+                          <strong>{customerPolicies.length} Policies on File</strong>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                )}
 
-                {/* Add New Sequential Tier Form */}
-                {!editingTier && (
-                  <form onSubmit={handleAddTier} className="tier-edit-box">
-                    <h5>+ Add New Sequential Quota Tier to {selectedPolicyObj?.policyNumber}</h5>
-                    <div className="form-row-3">
-                      <div>
-                        <label>Sequence #</label>
-                        <input
-                          type="number"
-                          value={newTierForm.tierSequence}
-                          onChange={e =>
-                            setNewTierForm({
-                              ...newTierForm,
-                              tierSequence: Number(e.target.value)
-                            })
-                          }
-                        />
+                  <div className="erp-notebook">
+                    <div className="erp-notebook-tabs">
+                      <button type="button" className="erp-nb-tab active">
+                        Customer&apos;s Insurance Policies ({customerPolicies.length})
+                      </button>
+                    </div>
+                    <div className="erp-notebook-page">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Policy Number</th>
+                            <th>Insurance Provider</th>
+                            <th>Start Date</th>
+                            <th>Expiration Date</th>
+                            <th>Covered Distance (KM)</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {customerPolicies.map(p => (
+                            <tr key={p.policyId}>
+                              <td>
+                                <strong>{p.policyNumber}</strong>
+                              </td>
+                              <td>{p.providerName}</td>
+                              <td>{p.startDate}</td>
+                              <td>{p.expirationDate}</td>
+                              <td>{p.defaultAllowedKm} KM</td>
+                              <td>
+                                <span className="badge badge-Done">{p.policyStatus}</span>
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn-xs"
+                                  onClick={() => {
+                                    setSelectedPolicyId(p.policyId);
+                                    setActiveTab('policies');
+                                    setPolicyViewMode('form');
+                                  }}
+                                >
+                                  Open Policy &amp; Quotas
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {customerViewMode === 'new' && (
+              <>
+                <div className="o-form-statusbar">
+                  <div className="action-btn-group">
+                    <button
+                      type="button"
+                      className="btn-erp-secondary"
+                      onClick={() => setCustomerViewMode('list')}
+                    >
+                      ← Discard / Back to List
+                    </button>
+                  </div>
+                  <div className="o-statusbar-status">
+                    <span className="o-stage-pill current">New Customer Registration</span>
+                  </div>
+                </div>
+
+                <form onSubmit={handleCreateCustomer} className="erp-sheet-pad">
+                  <div className="erp-oe-title">
+                    <span className="erp-oe-label">New Customer Record</span>
+                    <h1>{newCustomerForm.fullName || 'New Customer'}</h1>
+                  </div>
+
+                  <div className="erp-group-grid">
+                    <div className="erp-group-col">
+                      <div className="erp-group-header">CUSTOMER DETAILS</div>
+                      <div className="erp-field-row">
+                        <label>Full Name</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="text"
+                            placeholder="e.g. Rami Kanaan"
+                            value={newCustomerForm.fullName}
+                            onChange={e =>
+                              setNewCustomerForm({
+                                ...newCustomerForm,
+                                fullName: e.target.value
+                              })
+                            }
+                            required
+                          />
+                        </div>
                       </div>
-                      <div>
-                        <label>Coverage Type</label>
-                        <select
-                          value={newTierForm.coverageType}
-                          onChange={e =>
-                            setNewTierForm({
-                              ...newTierForm,
-                              coverageType: e.target.value
-                            })
-                          }
-                        >
-                          <option value="Accident">Accident</option>
-                          <option value="Mechanical">Mechanical</option>
-                          <option value="Winch">Winch</option>
-                          <option value="All">All</option>
-                        </select>
+                      <div className="erp-field-row">
+                        <label>Phone Number</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="text"
+                            placeholder="+961-03-889900"
+                            value={newCustomerForm.phone}
+                            onChange={e =>
+                              setNewCustomerForm({
+                                ...newCustomerForm,
+                                phone: e.target.value
+                              })
+                            }
+                            required
+                          />
+                        </div>
                       </div>
-                      <div>
-                        <label>Cooldown (Days)</label>
-                        <input
-                          type="number"
-                          value={newTierForm.minIntervalDays}
-                          onChange={e =>
-                            setNewTierForm({
-                              ...newTierForm,
-                              minIntervalDays: Number(e.target.value)
-                            })
-                          }
-                        />
+                      <div className="erp-field-row">
+                        <label>Email Address</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="email"
+                            placeholder="customer@domain.com"
+                            value={newCustomerForm.email}
+                            onChange={e =>
+                              setNewCustomerForm({
+                                ...newCustomerForm,
+                                email: e.target.value
+                              })
+                            }
+                          />
+                        </div>
                       </div>
                     </div>
-                    <button type="submit" className="btn-xs" style={{ marginTop: '8px' }}>
-                      + Add Sequential Tier
-                    </button>
-                  </form>
-                )}
+                  </div>
+
+                  <button type="submit" className="btn-erp-primary">
+                    Save Customer Record
+                  </button>
+                </form>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ==========================================================================
+            SUB-SECTION 2: INSURANCE POLICIES & QUOTAS (List, Policy Form Sheet, + New)
+           ========================================================================== */}
+        {activeTab === 'policies' && (
+          <div className="o-form-sheet">
+            {/* VIEW 1: SEARCHABLE POLICIES LIST VIEW */}
+            {policyViewMode === 'list' && (
+              <div className="erp-sheet-pad">
+                <div className="card-header-flex" style={{ marginBottom: '12px' }}>
+                  <div>
+                    <h3>Insurance Policies &amp; Quotas</h3>
+                    <p className="muted">
+                      Click any policy row to open its full Coverage &amp; Sequential Quota Tiers
+                      Form Sheet, or click <strong>+ New Policy</strong> to issue a new policy.
+                    </p>
+                  </div>
+                </div>
+
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Policy Number</th>
+                      <th>Customer</th>
+                      <th>Insurance Provider</th>
+                      <th>Expiration Date</th>
+                      <th>Covered Distance</th>
+                      <th>Mechanical Tows (Left / Allowed)</th>
+                      <th>Accident Tows (Left / Allowed)</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(dashboard?.policies || [])
+                      .filter(p => {
+                        const q = policySearch.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          p.policyNumber.toLowerCase().includes(q) ||
+                          p.customerName.toLowerCase().includes(q) ||
+                          (p.customerPhone || '').toLowerCase().includes(q) ||
+                          p.providerName.toLowerCase().includes(q)
+                        );
+                      })
+                      .map(p => {
+                        const tiers = p.tiers || [];
+                        const mechTiers = tiers.filter(
+                          t => t.coverageType === 'Mechanical' || t.coverageType === 'All'
+                        );
+                        const accTiers = tiers.filter(
+                          t => t.coverageType === 'Accident' || t.coverageType === 'All'
+                        );
+                        const allowMech = mechTiers.reduce((s, t) => s + t.allowedTows, 0);
+                        const leftMech = mechTiers.reduce((s, t) => s + t.remainingTows, 0);
+                        const allowAcc = accTiers.reduce((s, t) => s + t.allowedTows, 0);
+                        const leftAcc = accTiers.reduce((s, t) => s + t.remainingTows, 0);
+
+                        return (
+                          <tr
+                            key={p.policyId}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => {
+                              setSelectedCustomerId(p.customerId);
+                              setSelectedPolicyId(p.policyId);
+                              setPolicyViewMode('form');
+                            }}
+                          >
+                            <td>
+                              <strong>{p.policyNumber}</strong>
+                            </td>
+                            <td>
+                              {p.customerName} <span className="muted">({p.customerPhone})</span>
+                            </td>
+                            <td>{p.providerName}</td>
+                            <td>{p.expirationDate}</td>
+                            <td>{p.defaultAllowedKm} KM</td>
+                            <td>
+                              <strong className={leftMech <= 0 ? 'text-red' : 'text-green'}>
+                                {leftMech}
+                              </strong>{' '}
+                              / {allowMech}
+                            </td>
+                            <td>
+                              <strong className={leftAcc <= 0 ? 'text-red' : 'text-green'}>
+                                {leftAcc}
+                              </strong>{' '}
+                              / {allowAcc}
+                            </td>
+                            <td>
+                              <span
+                                className={`badge ${
+                                  p.policyStatus === 'Active' ? 'badge-Done' : 'badge-Rejected'
+                                }`}
+                              >
+                                {p.policyStatus}
+                              </span>
+                            </td>
+                            <td onClick={e => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="btn-xs"
+                                onClick={() => {
+                                  setSelectedCustomerId(p.customerId);
+                                  setSelectedPolicyId(p.policyId);
+                                  setPolicyViewMode('form');
+                                }}
+                              >
+                                Open Policy Sheet
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
               </div>
-            </div>
+            )}
+
+            {/* VIEW 2: INSURANCE POLICY FORM SHEET (Exact Replica of view_tow_insurance_policy_form) */}
+            {policyViewMode === 'form' && selectedPolicyObj && (
+              <>
+                <div className="o-form-statusbar">
+                  <div className="action-btn-group">
+                    <button
+                      type="button"
+                      className="btn-erp-secondary"
+                      onClick={() => setPolicyViewMode('list')}
+                    >
+                      ← Back to Policies List
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-erp-primary"
+                      onClick={() => setPolicyViewMode('new')}
+                    >
+                      + New Policy
+                    </button>
+                  </div>
+                  <div className="o-statusbar-status">
+                    <span
+                      className={
+                        selectedPolicyObj.policyStatus === 'Active'
+                          ? 'o-stage-pill current'
+                          : 'o-stage-pill'
+                      }
+                    >
+                      Active
+                    </span>
+                    <span className="o-stage-pill">Quota Exceeded</span>
+                    <span
+                      className={
+                        selectedPolicyObj.policyStatus === 'Expired'
+                          ? 'o-stage-pill current'
+                          : 'o-stage-pill'
+                      }
+                    >
+                      Expired
+                    </span>
+                  </div>
+                </div>
+
+                <div className="erp-sheet-pad">
+                  <div className="erp-oe-title">
+                    <span className="erp-oe-label">Policy Number</span>
+                    <h1>{selectedPolicyObj.policyNumber}</h1>
+                  </div>
+
+                  {(() => {
+                    const tiers = selectedPolicyTiers;
+                    const totalAllowed = tiers.reduce((s, t) => s + t.allowedTows, 0);
+                    const totalUsed = tiers.reduce((s, t) => s + t.usedTows, 0);
+                    const totalRemaining = tiers.reduce((s, t) => s + t.remainingTows, 0);
+
+                    const mechTiers = tiers.filter(
+                      t => t.coverageType === 'Mechanical' || t.coverageType === 'All'
+                    );
+                    const accTiers = tiers.filter(
+                      t => t.coverageType === 'Accident' || t.coverageType === 'All'
+                    );
+
+                    const allowMech = mechTiers.reduce((s, t) => s + t.allowedTows, 0);
+                    const usedMech = mechTiers.reduce((s, t) => s + t.usedTows, 0);
+                    const leftMech = mechTiers.reduce((s, t) => s + t.remainingTows, 0);
+
+                    const allowAcc = accTiers.reduce((s, t) => s + t.allowedTows, 0);
+                    const usedAcc = accTiers.reduce((s, t) => s + t.usedTows, 0);
+                    const leftAcc = accTiers.reduce((s, t) => s + t.remainingTows, 0);
+
+                    return (
+                      <>
+                        {/* GROUP 1: Coverage Details | Total Quotas Summary */}
+                        <div className="erp-group-grid">
+                          <div className="erp-group-col">
+                            <div className="erp-group-header">COVERAGE DETAILS</div>
+                            <div className="erp-field-row">
+                              <label>Customer</label>
+                              <div className="erp-field-val">
+                                <strong>{selectedPolicyObj.customerName}</strong> (
+                                {selectedPolicyObj.customerPhone})
+                              </div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Insurance Provider</label>
+                              <div className="erp-field-val">
+                                <span>{selectedPolicyObj.providerName}</span>
+                              </div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Start Date</label>
+                              <div className="erp-field-val">
+                                <span>{selectedPolicyObj.startDate}</span>
+                              </div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Expiration Date</label>
+                              <div className="erp-field-val">
+                                <span>{selectedPolicyObj.expirationDate}</span>
+                              </div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Covered Distance (KM/Tow)</label>
+                              <div className="erp-field-val">
+                                <strong>{selectedPolicyObj.defaultAllowedKm} KM</strong>
+                              </div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Default Min Days Between Tows</label>
+                              <div className="erp-field-val">
+                                <span>{selectedPolicyObj.defaultMinIntervalDays} days</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="erp-group-col">
+                            <div className="erp-group-header">TOTAL QUOTAS SUMMARY</div>
+                            <div className="erp-field-row">
+                              <label>Total Allowed Tows</label>
+                              <div className="erp-field-val">
+                                <strong>{totalAllowed}</strong>
+                              </div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Total Used Tows</label>
+                              <div className="erp-field-val">
+                                <span>{totalUsed}</span>
+                              </div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Total Remaining Tows</label>
+                              <div className="erp-field-val">
+                                <strong style={{ fontSize: '16px', color: 'var(--erp-brand)' }}>
+                                  {totalRemaining}
+                                </strong>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* GROUP 2: Tow Breakdown Quotas (Separate Allowances) */}
+                        <div className="erp-group-grid">
+                          <div className="erp-group-col">
+                            <div className="erp-group-header">MECHANICAL BREAKDOWNS</div>
+                            <div className="erp-field-row">
+                              <label>Allowed Mechanical Tows</label>
+                              <div className="erp-field-val">{allowMech}</div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Used Mechanical Tows</label>
+                              <div className="erp-field-val">{usedMech}</div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Remaining Mechanical Tows</label>
+                              <div className="erp-field-val">
+                                <strong className={leftMech > 0 ? 'text-green' : 'text-red'}>
+                                  {leftMech}
+                                </strong>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="erp-group-col">
+                            <div className="erp-group-header">ACCIDENT TOWS</div>
+                            <div className="erp-field-row">
+                              <label>Allowed Accident Tows</label>
+                              <div className="erp-field-val">{allowAcc}</div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Used Accident Tows</label>
+                              <div className="erp-field-val">{usedAcc}</div>
+                            </div>
+                            <div className="erp-field-row">
+                              <label>Remaining Accident Tows</label>
+                              <div className="erp-field-val">
+                                <strong className={leftAcc > 0 ? 'text-green' : 'text-red'}>
+                                  {leftAcc}
+                                </strong>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+
+                  {/* BOTTOM NOTEBOOK (<notebook>) */}
+                  <div className="erp-notebook">
+                    <div className="erp-notebook-tabs">
+                      <button
+                        type="button"
+                        className={
+                          policyNotebookTab === 'tiers' ? 'erp-nb-tab active' : 'erp-nb-tab'
+                        }
+                        onClick={() => setPolicyNotebookTab('tiers')}
+                      >
+                        Coverage Quota Tiers (Sequential Priority)
+                      </button>
+                      <button
+                        type="button"
+                        className={
+                          policyNotebookTab === 'history' ? 'erp-nb-tab active' : 'erp-nb-tab'
+                        }
+                        onClick={() => setPolicyNotebookTab('history')}
+                      >
+                        Tow History Under This Policy
+                      </button>
+                    </div>
+
+                    <div className="erp-notebook-page">
+                      {policyNotebookTab === 'tiers' ? (
+                        <>
+                          <p className="muted" style={{ marginBottom: '10px' }}>
+                            Quotas are consumed strictly in priority sequence order (e.g. 1st:
+                            Mechanical Tows up to 50 KM, then 2nd: Mechanical Tows up to 100 KM).
+                          </p>
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Sequence</th>
+                                <th>Tier Description</th>
+                                <th>Issue Type</th>
+                                <th>Allowed Tows</th>
+                                <th>Max Distance (KM)</th>
+                                <th>Min Days Between Tows</th>
+                                <th>Used Tows</th>
+                                <th>Remaining Tows</th>
+                                <th>Action</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {selectedPolicyTiers.map(tier => (
+                                <tr key={tier.quotaTierId}>
+                                  <td>#{tier.tierSequence}</td>
+                                  <td>
+                                    Tier #{tier.tierSequence} — {tier.coverageType} (
+                                    {tier.maxDistanceKm} KM)
+                                  </td>
+                                  <td>
+                                    <strong>{tier.coverageType}</strong>
+                                  </td>
+                                  <td>{tier.allowedTows}</td>
+                                  <td>{tier.maxDistanceKm} KM</td>
+                                  <td>{tier.minIntervalDays} days</td>
+                                  <td>{tier.usedTows}</td>
+                                  <td>
+                                    <span
+                                      className={`badge ${
+                                        tier.remainingTows > 0 ? 'badge-Done' : 'badge-Rejected'
+                                      }`}
+                                    >
+                                      {tier.remainingTows}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <button
+                                      type="button"
+                                      className="btn-xs"
+                                      onClick={() => setEditingTier({ ...tier })}
+                                    >
+                                      Edit
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+
+                          {editingTier && (
+                            <div className="tier-edit-box">
+                              <h5>
+                                Edit Tier #{editingTier.tierSequence} ({editingTier.coverageType})
+                              </h5>
+                              <div className="form-row-3">
+                                <div>
+                                  <label>Allowed Tows</label>
+                                  <input
+                                    type="number"
+                                    value={editingTier.allowedTows}
+                                    onChange={e =>
+                                      setEditingTier({
+                                        ...editingTier,
+                                        allowedTows: Number(e.target.value)
+                                      })
+                                    }
+                                  />
+                                </div>
+                                <div>
+                                  <label>Max Distance (KM)</label>
+                                  <input
+                                    type="number"
+                                    value={editingTier.maxDistanceKm}
+                                    onChange={e =>
+                                      setEditingTier({
+                                        ...editingTier,
+                                        maxDistanceKm: Number(e.target.value)
+                                      })
+                                    }
+                                  />
+                                </div>
+                                <div>
+                                  <label>Min Days Between Tows (Cooldown)</label>
+                                  <input
+                                    type="number"
+                                    value={editingTier.minIntervalDays}
+                                    onChange={e =>
+                                      setEditingTier({
+                                        ...editingTier,
+                                        minIntervalDays: Number(e.target.value)
+                                      })
+                                    }
+                                  />
+                                </div>
+                              </div>
+                              <div className="modal-actions" style={{ marginTop: '8px' }}>
+                                <button
+                                  type="button"
+                                  className="btn-primary"
+                                  onClick={() => handleUpdateTier(editingTier)}
+                                >
+                                  Save Tier Rule
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-secondary"
+                                  onClick={() => setEditingTier(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {!editingTier && (
+                            <form onSubmit={handleAddTier} className="tier-edit-box">
+                              <h5>+ Add a Line (New Sequential Quota Tier)</h5>
+                              <div className="form-row-3">
+                                <div>
+                                  <label>Sequence #</label>
+                                  <input
+                                    type="number"
+                                    value={newTierForm.tierSequence}
+                                    onChange={e =>
+                                      setNewTierForm({
+                                        ...newTierForm,
+                                        tierSequence: Number(e.target.value)
+                                      })
+                                    }
+                                  />
+                                </div>
+                                <div>
+                                  <label>Issue Type</label>
+                                  <select
+                                    value={newTierForm.coverageType}
+                                    onChange={e =>
+                                      setNewTierForm({
+                                        ...newTierForm,
+                                        coverageType: e.target.value
+                                      })
+                                    }
+                                  >
+                                    <option value="Mechanical">Mechanical</option>
+                                    <option value="Accident">Accident</option>
+                                    <option value="Winch">Winch</option>
+                                    <option value="All">All</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label>Min Days Between Tows</label>
+                                  <input
+                                    type="number"
+                                    value={newTierForm.minIntervalDays}
+                                    onChange={e =>
+                                      setNewTierForm({
+                                        ...newTierForm,
+                                        minIntervalDays: Number(e.target.value)
+                                      })
+                                    }
+                                  />
+                                </div>
+                              </div>
+                              <button type="submit" className="btn-xs" style={{ marginTop: '8px' }}>
+                                + Add Sequential Tier
+                              </button>
+                            </form>
+                          )}
+                        </>
+                      ) : (
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Request #</th>
+                              <th>Call Time</th>
+                              <th>Vehicle Plate</th>
+                              <th>Breakdown Issue</th>
+                              <th>Actual Distance (KM)</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(dashboard?.recentRequests || [])
+                              .filter(r => r.policyId === selectedPolicyObj.policyId)
+                              .map(r => (
+                                <tr key={r.towRequestId}>
+                                  <td>
+                                    <strong>{r.requestNumber}</strong>
+                                  </td>
+                                  <td>{r.createdAt}</td>
+                                  <td>
+                                    <code>{r.vehiclePlate}</code>
+                                  </td>
+                                  <td>{r.issueType}</td>
+                                  <td>{r.actualDistanceKm} KM</td>
+                                  <td>
+                                    <span className={`badge badge-${r.status}`}>{r.status}</span>
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* VIEW 3: + NEW POLICY FORM SHEET */}
+            {policyViewMode === 'new' && (
+              <>
+                <div className="o-form-statusbar">
+                  <div className="action-btn-group">
+                    <button
+                      type="button"
+                      className="btn-erp-secondary"
+                      onClick={() => setPolicyViewMode('list')}
+                    >
+                      ← Discard / Back to Policies List
+                    </button>
+                  </div>
+                  <div className="o-statusbar-status">
+                    <span className="o-stage-pill current">New Policy Draft</span>
+                    <span className="o-stage-pill">Active</span>
+                  </div>
+                </div>
+
+                <form onSubmit={handleCreatePolicy} className="erp-sheet-pad">
+                  <div className="erp-oe-title">
+                    <span className="erp-oe-label">Policy Number</span>
+                    <h1>{newPolicyForm.policyNumber}</h1>
+                  </div>
+
+                  <div className="erp-group-grid">
+                    <div className="erp-group-col">
+                      <div className="erp-group-header">COVERAGE DETAILS</div>
+                      <div className="erp-field-row">
+                        <label>Customer</label>
+                        <div className="erp-field-val">
+                          <select
+                            value={newPolicyForm.customerId || selectedCustomerId}
+                            onChange={e => {
+                              const cid = Number(e.target.value);
+                              setNewPolicyForm({ ...newPolicyForm, customerId: cid });
+                              handleSelectCustomer(cid);
+                            }}
+                          >
+                            {customersList.map(c => (
+                              <option key={c.customerId} value={c.customerId}>
+                                {c.fullName} ({c.phone}) — {c.policyCount} Policies
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Insurance Provider</label>
+                        <div className="erp-field-val">
+                          <select
+                            value={newPolicyForm.providerId}
+                            onChange={e =>
+                              setNewPolicyForm({
+                                ...newPolicyForm,
+                                providerId: Number(e.target.value)
+                              })
+                            }
+                          >
+                            <option value={1}>Allianz SNA Lebanon (ALLIANZ-LB)</option>
+                            <option value={2}>Bankers Assurance SAL (BANKERS-LB)</option>
+                            <option value={3}>AXA Middle East SAL (AXA-ME)</option>
+                            <option value={4}>Medgulf Insurance SAL (MEDGULF-LB)</option>
+                            <option value={5}>Fidelity Insurance Group (FIDELITY-LB)</option>
+                            <option value={6}>LIA Assurex SAL (LIA-LB)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Policy Number</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="text"
+                            value={newPolicyForm.policyNumber}
+                            onChange={e =>
+                              setNewPolicyForm({
+                                ...newPolicyForm,
+                                policyNumber: e.target.value
+                              })
+                            }
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Start Date</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="date"
+                            value={newPolicyForm.startDate}
+                            onChange={e =>
+                              setNewPolicyForm({
+                                ...newPolicyForm,
+                                startDate: e.target.value
+                              })
+                            }
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Expiration Date</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="date"
+                            value={newPolicyForm.expirationDate}
+                            onChange={e =>
+                              setNewPolicyForm({
+                                ...newPolicyForm,
+                                expirationDate: e.target.value
+                              })
+                            }
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Covered Distance (KM/Tow)</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="number"
+                            value={newPolicyForm.defaultAllowedKm}
+                            onChange={e =>
+                              setNewPolicyForm({
+                                ...newPolicyForm,
+                                defaultAllowedKm: Number(e.target.value)
+                              })
+                            }
+                            required
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="erp-group-col">
+                      <div className="erp-group-header">INITIAL TOW BREAKDOWN QUOTAS</div>
+
+                      <div className="erp-field-row">
+                        <label>Allowed Mechanical Tows</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="number"
+                            value={newPolicyForm.mechanicalAllowedTows}
+                            onChange={e =>
+                              setNewPolicyForm({
+                                ...newPolicyForm,
+                                mechanicalAllowedTows: Number(e.target.value)
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Mechanical Cooldown (Days)</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="number"
+                            value={newPolicyForm.mechanicalCooldownDays}
+                            onChange={e =>
+                              setNewPolicyForm({
+                                ...newPolicyForm,
+                                mechanicalCooldownDays: Number(e.target.value)
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Allowed Accident Tows</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="number"
+                            value={newPolicyForm.accidentAllowedTows}
+                            onChange={e =>
+                              setNewPolicyForm({
+                                ...newPolicyForm,
+                                accidentAllowedTows: Number(e.target.value)
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className="erp-field-row">
+                        <label>Accident Cooldown (Days)</label>
+                        <div className="erp-field-val">
+                          <input
+                            type="number"
+                            value={newPolicyForm.accidentCooldownDays}
+                            onChange={e =>
+                              setNewPolicyForm({
+                                ...newPolicyForm,
+                                accidentCooldownDays: Number(e.target.value)
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button type="submit" className="btn-erp-primary">
+                    Save &amp; Activate Insurance Policy
+                  </button>
+                </form>
+              </>
+            )}
           </div>
         )}
 

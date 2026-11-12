@@ -1445,27 +1445,27 @@ input:focus, select:focus {
 }
 
 /* ============================================================================
-   9. TRACKER CONNECT™ WELCOME & ENCRYPTED LOGIN PORTAL (tracker.co.za Inspired)
+   9. TRACKER CONNECT™ WELCOME & ENCRYPTED LOGIN PORTAL (Homogeneous Theme)
 ============================================================================ */
 .tracker-welcome-page {
   min-height: 100vh;
-  background: radial-gradient(circle at 18% 20%, #162447 0%, #0b132b 58%, #070b19 100%);
-  color: #f8fafc;
+  background: #f8f9fa;
+  color: var(--text-main);
   display: flex;
   flex-direction: column;
   font-family: var(--font-sans);
 }
 
 .tracker-top-ribbon {
-  background: #060a17;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 7px 24px;
-  font-size: 11.5px;
-  color: #cbd5e1;
+  background: #462d40;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 6px 24px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .tracker-ribbon-inner {
-  max-width: 1340px;
+  max-width: 1280px;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -1478,34 +1478,34 @@ input:focus, select:focus {
 .tracker-ribbon-right {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
 
 .tracker-pulse-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #ff5a1f;
-  box-shadow: 0 0 0 4px rgba(255, 90, 31, 0.25);
+  background: #28a745;
+  box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.28);
   display: inline-block;
 }
 
 .tracker-ribbon-sep {
-  opacity: 0.35;
+  opacity: 0.4;
 }
 
 .tracker-public-nav {
-  background: rgba(11, 19, 43, 0.85);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 14px 24px;
+  background: var(--erp-brand);
+  border-bottom: 1px solid var(--erp-brand-dark);
+  padding: 10px 24px;
   position: sticky;
   top: 0;
   z-index: 50;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 
 .tracker-nav-inner {
-  max-width: 1340px;
+  max-width: 1280px;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -1516,74 +1516,74 @@ input:focus, select:focus {
 .tracker-brand-logo {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
 }
 
 .tracker-emblem {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #ff5a1f 0%, #e03e00 100%);
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  background: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 900;
-  font-size: 21px;
-  color: #ffffff;
-  box-shadow: 0 6px 18px rgba(255, 90, 31, 0.38);
+  font-size: 18px;
+  color: var(--erp-brand);
 }
 
 .tracker-brand-title {
-  font-size: 19px;
-  font-weight: 900;
-  letter-spacing: 0.04em;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
   color: #ffffff;
 }
 
 .tracker-brand-title span {
-  color: #ff5a1f;
+  color: #f3e8ef;
+  font-weight: 600;
 }
 
 .tracker-brand-sub {
   font-size: 10px;
-  letter-spacing: 0.12em;
-  color: #94a3b8;
-  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.75);
+  font-weight: 600;
 }
 
 .tracker-public-links {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 22px;
 }
 
 .tracker-public-links a {
-  color: #e2e8f0;
+  color: rgba(255, 255, 255, 0.88);
   text-decoration: none;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   transition: color 0.15s;
 }
 
 .tracker-public-links a:hover {
-  color: #ff5a1f;
+  color: #ffffff;
 }
 
 .tracker-hotline-pill {
-  background: rgba(255, 90, 31, 0.14);
-  border: 1px solid rgba(255, 90, 31, 0.45);
-  padding: 6px 14px;
-  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  padding: 5px 13px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
-  color: #ffd8c9;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .tracker-hotline-pill strong {
-  color: #ff5a1f;
-  font-size: 14px;
+  color: #ffffff;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -1591,54 +1591,52 @@ input:focus, select:focus {
   flex: 1;
   display: flex;
   align-items: center;
-  padding: 36px 24px 52px;
+  padding: 32px 24px 44px;
 }
 
 .tracker-hero-inner {
-  max-width: 1340px;
+  max-width: 1280px;
   margin: 0 auto;
   width: 100%;
   display: grid;
   grid-template-columns: 1.25fr 0.95fr;
-  gap: 44px;
-  align-items: center;
+  gap: 36px;
+  align-items: start;
 }
 
 .tracker-eyebrow-pill {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: rgba(0, 168, 232, 0.14);
-  border: 1px solid rgba(0, 168, 232, 0.4);
-  color: #7dd3fc;
-  padding: 5px 13px;
-  border-radius: 999px;
+  background: var(--erp-brand-light);
+  border: 1px solid #d8bfd2;
+  color: var(--erp-brand);
+  padding: 4px 12px;
+  border-radius: 4px;
   font-size: 11px;
   font-weight: 800;
-  letter-spacing: 0.06em;
-  margin-bottom: 16px;
+  letter-spacing: 0.05em;
+  margin-bottom: 14px;
 }
 
 .tracker-hero-copy h1 {
-  font-size: 38px;
-  line-height: 1.15;
-  font-weight: 900;
-  color: #ffffff;
-  margin-bottom: 14px;
-  letter-spacing: -0.02em;
+  font-size: 32px;
+  line-height: 1.2;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-bottom: 12px;
+  letter-spacing: -0.01em;
 }
 
 .tracker-accent-text {
-  background: linear-gradient(90deg, #ff5a1f 0%, #ff9e44 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--erp-brand);
 }
 
 .tracker-hero-lead {
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.6;
-  color: #cbd5e1;
-  margin-bottom: 24px;
+  color: var(--text-secondary);
+  margin-bottom: 22px;
   max-width: 640px;
 }
 
@@ -1646,108 +1644,112 @@ input:focus, select:focus {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
-  margin-bottom: 26px;
+  margin-bottom: 22px;
 }
 
 .tracker-stat-card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 10px;
-  padding: 13px 14px;
+  background: #ffffff;
+  border: 1px solid var(--border-color);
+  border-top: 3px solid var(--erp-brand);
+  border-radius: 4px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .tracker-stat-num {
-  font-size: 21px;
-  font-weight: 900;
-  color: #ff5a1f;
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--erp-brand);
   margin-bottom: 2px;
 }
 
 .tracker-stat-label {
   font-size: 11px;
-  color: #cbd5e1;
+  color: var(--text-secondary);
   line-height: 1.3;
 }
 
 .tracker-pillars {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .tracker-pillar-item {
   display: flex;
   align-items: flex-start;
   gap: 14px;
-  background: rgba(15, 23, 42, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 13px 16px;
-  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid var(--border-color);
+  padding: 12px 16px;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
 .tracker-pillar-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 8px;
-  background: rgba(255, 90, 31, 0.15);
-  border: 1px solid rgba(255, 90, 31, 0.35);
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  background: var(--erp-brand-light);
+  border: 1px solid #d8bfd2;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
-  color: #ff5a1f;
+  color: var(--erp-brand);
   letter-spacing: 0.04em;
   flex-shrink: 0;
 }
 
 .tracker-pillar-item h4 {
-  font-size: 14px;
-  font-weight: 800;
-  color: #ffffff;
-  margin-bottom: 3px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 2px;
 }
 
 .tracker-pillar-item p {
-  font-size: 12.5px;
-  color: #94a3b8;
+  font-size: 12px;
+  color: var(--text-secondary);
   line-height: 1.45;
 }
 
-/* Right Side Login Card */
+/* Right Side Login Card (Matches ERP Form Sheet aesthetic) */
 .tracker-login-card {
   background: #ffffff;
-  color: #0f172a;
-  border-radius: 16px;
-  padding: 28px 28px 24px;
-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--text-main);
+  border-radius: 6px;
+  padding: 26px 28px 22px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border-color);
+  border-top: 4px solid var(--erp-brand);
 }
 
 .tracker-login-badge {
   display: inline-block;
-  background: #fff7ed;
-  color: #c2410c;
-  border: 1px solid #fdba74;
-  font-size: 10.5px;
+  background: var(--erp-brand-light);
+  color: var(--erp-brand);
+  border: 1px solid #d8bfd2;
+  font-size: 10px;
   font-weight: 800;
-  padding: 3px 10px;
-  border-radius: 999px;
+  padding: 3px 9px;
+  border-radius: 3px;
   letter-spacing: 0.05em;
   margin-bottom: 10px;
 }
 
 .tracker-login-header h2 {
-  font-size: 22px;
-  font-weight: 900;
-  color: #0f172a;
-  margin-bottom: 6px;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-bottom: 5px;
 }
 
 .tracker-login-header p {
-  font-size: 12.5px;
-  color: #475569;
-  margin-bottom: 18px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
   line-height: 1.45;
 }
 
@@ -1755,8 +1757,8 @@ input:focus, select:focus {
   background: #fef2f2;
   border: 1px solid #f87171;
   color: #991b1b;
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 9px 12px;
+  border-radius: 4px;
   font-size: 12px;
   font-weight: 600;
   margin-bottom: 14px;
@@ -1765,22 +1767,22 @@ input:focus, select:focus {
 .tracker-login-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 13px;
 }
 
 .tracker-field label {
   display: block;
   font-size: 12px;
   font-weight: 700;
-  color: #1e293b;
-  margin-bottom: 5px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
 }
 
 .tracker-field-label-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 5px;
+  margin-bottom: 4px;
 }
 
 .tracker-field-label-row label {
@@ -1790,60 +1792,57 @@ input:focus, select:focus {
 .tracker-link-btn {
   background: none;
   border: none;
-  color: #ea580c;
-  font-size: 11.5px;
+  color: var(--erp-brand);
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
 }
 
 .tracker-field input {
   width: 100%;
-  padding: 10px 13px;
-  border: 1.5px solid #cbd5e1;
-  border-radius: 8px;
-  font-size: 13.5px;
-  color: #0f172a;
-  background: #f8fafc;
-  transition: border-color 0.15s, background 0.15s;
+  padding: 8px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text-main);
+  background: #ffffff;
+  transition: border-color 0.15s;
 }
 
 .tracker-field input:focus {
   outline: none;
-  border-color: #ff5a1f;
-  background: #ffffff;
-  box-shadow: 0 0 0 3px rgba(255, 90, 31, 0.15);
+  border-color: var(--erp-brand);
+  box-shadow: 0 0 0 2px rgba(113, 75, 103, 0.15);
 }
 
 .tracker-btn-signin {
   margin-top: 4px;
   width: 100%;
-  padding: 12px 18px;
-  border: none;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #ff5a1f 0%, #d93800 100%);
+  padding: 10px 16px;
+  border: 1px solid var(--erp-brand-dark);
+  border-radius: 4px;
+  background: var(--erp-brand);
   color: #ffffff;
-  font-size: 14px;
-  font-weight: 800;
+  font-size: 13.5px;
+  font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 8px 20px rgba(255, 90, 31, 0.3);
-  transition: transform 0.12s, box-shadow 0.12s;
+  transition: background 0.15s;
 }
 
 .tracker-btn-signin:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(255, 90, 31, 0.4);
+  background: var(--erp-brand-dark);
 }
 
 .tracker-quick-operators {
-  margin-top: 18px;
+  margin-top: 16px;
   padding-top: 14px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .tracker-quick-title {
   font-size: 11px;
   font-weight: 700;
-  color: #64748b;
+  color: var(--text-muted);
   margin-bottom: 8px;
 }
 
@@ -1855,44 +1854,44 @@ input:focus, select:focus {
 
 .tracker-op-chip {
   text-align: left;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid #cbd5e1;
-  background: #f8fafc;
+  padding: 7px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: #f8f9fa;
   cursor: pointer;
   transition: all 0.14s;
 }
 
 .tracker-op-chip:hover,
 .tracker-op-chip.active {
-  border-color: #ff5a1f;
-  background: #fff7ed;
+  border-color: var(--erp-brand);
+  background: var(--erp-brand-light);
 }
 
 .tracker-op-name {
   font-size: 12px;
-  font-weight: 800;
-  color: #0f172a;
+  font-weight: 700;
+  color: var(--text-main);
 }
 
 .tracker-op-role {
   font-size: 10.5px;
-  color: #475569;
-  margin: 1px 0 3px;
+  color: var(--text-secondary);
+  margin: 1px 0 2px;
 }
 
 .tracker-op-creds {
   font-size: 10px;
-  color: #ea580c;
+  color: var(--erp-brand);
   font-weight: 700;
 }
 
 .tracker-mini-emblem {
   width: 22px;
   height: 22px;
-  border-radius: 5px;
-  background: #ff5a1f;
-  color: #ffffff;
+  border-radius: 4px;
+  background: #ffffff;
+  color: var(--erp-brand);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1913,12 +1912,285 @@ input:focus, select:focus {
 }
 
 .btn-signout-nav:hover {
-  background: #ef4444;
-  border-color: #ef4444;
+  background: #dc3545;
+  border-color: #dc3545;
+}
+
+/* ============================================================================
+   10. NAVBAR DROPDOWN, UNIFIED FORM SHEET GROUPS & NOTEBOOK TABS
+============================================================================ */
+.o-nav-dropdown-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.o-nav-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 235px;
+  background: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+  z-index: 2500;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.o-dropdown-item {
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-main);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background 0.12s;
+}
+
+.o-dropdown-item:hover,
+.o-dropdown-item.active {
+  background: var(--erp-brand-light);
+  color: var(--erp-brand);
+}
+
+.o-cp-search-input {
+  width: 270px;
+  padding: 5px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 12.5px;
+  background: #f8f9fa;
+  color: var(--text-main);
+}
+
+.o-cp-search-input:focus {
+  background: #ffffff;
+  border-color: var(--erp-brand);
+  outline: none;
+}
+
+/* Replicated Form Sheet Layout */
+.erp-form-sheet {
+  max-width: 1280px;
+  margin: 0 auto 24px;
+}
+
+.erp-statusbar {
+  background: #f8f9fa;
+  border-bottom: 1px solid var(--border-color);
+  padding: 8px 20px;
+}
+
+.erp-sheet-pad {
+  padding: 22px 28px 28px;
+}
+
+.erp-alert-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  margin-bottom: 16px;
+  border: 1px solid transparent;
+}
+
+.erp-alert-banner.alert-ok {
+  background: #d1ecf1;
+  border-color: #bee5eb;
+  color: #0c5460;
+}
+
+.erp-alert-banner.alert-warn {
+  background: #fff3cd;
+  border-color: #ffeeba;
+  color: #856404;
+}
+
+.erp-alert-banner.alert-neutral {
+  background: #f8f9fa;
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+.erp-oe-title {
+  margin-bottom: 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.erp-oe-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 2px;
+}
+
+.erp-oe-title h1 {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin: 0;
+}
+
+/* 2-Column Horizontal <group> Grid */
+.erp-group-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px 36px;
+}
+
+.erp-group-col {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.erp-group-header {
+  font-size: 11.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--erp-brand);
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 5px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.erp-field-row {
+  display: grid;
+  grid-template-columns: 165px 1fr;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.erp-field-row > label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-main);
+  border-right: 1px solid var(--border-subtle);
+  padding-right: 8px;
+  line-height: 1.3;
+}
+
+.erp-field-val {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  font-size: 13px;
+}
+
+.erp-field-val input,
+.erp-field-val select {
+  padding: 5px 9px;
+  font-size: 12.5px;
+  border-radius: 3px;
+}
+
+.erp-readonly-input {
+  background: #f8f9fa !important;
+  color: var(--text-secondary) !important;
+  border-color: #e2e8f0 !important;
+}
+
+.erp-readonly-text {
+  font-size: 13px;
+  color: var(--text-main);
+  padding: 3px 0;
+}
+
+.erp-plate-flex {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.erp-combined-plate {
+  display: inline-block;
+  background: #f8f9fa;
+  border: 1px solid var(--border-color);
+  padding: 3px 10px;
+  border-radius: 3px;
+  font-weight: 800;
+  font-family: monospace;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+}
+
+.erp-toggle-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.erp-toggle-switch input {
+  width: auto;
+}
+
+/* Replicated <notebook> Component */
+.erp-notebook {
+  margin-top: 24px;
+  border-top: 1px solid var(--border-color);
+}
+
+.erp-notebook-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border-color);
+  margin-top: -1px;
+  background: #f8f9fa;
+  padding: 0 12px;
+}
+
+.erp-nb-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  padding: 9px 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  cursor: pointer;
+  position: relative;
+  top: 1px;
+}
+
+.erp-nb-tab.active {
+  background: #ffffff;
+  color: var(--erp-brand);
+  border-color: var(--border-color);
+  border-top: 2px solid var(--erp-brand);
+}
+
+.erp-notebook-page {
+  padding: 16px 4px 4px;
 }
 
 @media (max-width: 1024px) {
-  .tracker-hero-inner {
+  .tracker-hero-inner,
+  .erp-group-grid {
     grid-template-columns: 1fr;
   }
   .tracker-stats-grid {
