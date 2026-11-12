@@ -112,11 +112,36 @@ VALUES
 
 -- Policy 5: EXPIRED POLICY
 INSERT INTO dbo.InsurancePolicies (PolicyNumber, CustomerId, ProviderId, StartDate, ExpirationDate, DefaultAllowedKm, DefaultMinIntervalDays, PolicyStatus)
-VALUES ('POL-2025-EXPIRED', 5, 1, '2025-01-01', '2025-12-31', 50.00, 0, 'Expired');
+VALUES ('POL-2025-EXPIRED', 5, 1, '2025-01-01', '2025-12-31', 50.00, 0, 'Active');
+UPDATE dbo.InsurancePolicies SET PolicyStatus = 'Expired' WHERE PolicyNumber = 'POL-2025-EXPIRED';
 
 INSERT INTO dbo.PolicyQuotaTiers (PolicyId, TierSequence, CoverageType, AllowedTows, UsedTows, MaxDistanceKm, MinIntervalDays)
 VALUES
     (5, 10, 'All', 3, 0, 50.00, 0);
+
+-- Additional Multiple Policies for Customers 1, 2, and 3 (demonstrating 1:N Customer -> InsurancePolicies)
+INSERT INTO dbo.InsurancePolicies (PolicyNumber, CustomerId, ProviderId, StartDate, ExpirationDate, DefaultAllowedKm, DefaultMinIntervalDays, PolicyStatus)
+VALUES
+    ('POL-2026-ALZ101', 1, 1, '2026-01-01', '2026-12-31', 100.00, 3, 'Active'),
+    ('POL-2026-AXA102', 1, 3, '2026-02-01', '2026-12-31', 40.00,  7, 'Active'),
+    ('POL-2026-MED202', 2, 4, '2026-01-15', '2026-12-31', 50.00, 10, 'Active'),
+    ('POL-2026-BNK303', 3, 2, '2026-03-01', '2026-12-31', 75.00,  5, 'Active');
+
+DECLARE @P_ALZ INT = (SELECT PolicyId FROM dbo.InsurancePolicies WHERE PolicyNumber = 'POL-2026-ALZ101');
+DECLARE @P_AXA INT = (SELECT PolicyId FROM dbo.InsurancePolicies WHERE PolicyNumber = 'POL-2026-AXA102');
+DECLARE @P_MED INT = (SELECT PolicyId FROM dbo.InsurancePolicies WHERE PolicyNumber = 'POL-2026-MED202');
+DECLARE @P_BNK INT = (SELECT PolicyId FROM dbo.InsurancePolicies WHERE PolicyNumber = 'POL-2026-BNK303');
+
+INSERT INTO dbo.PolicyQuotaTiers (PolicyId, TierSequence, CoverageType, AllowedTows, UsedTows, MaxDistanceKm, MinIntervalDays)
+VALUES
+    (@P_ALZ, 1, 'Mechanical', 4, 0, 100.00, 3),
+    (@P_ALZ, 2, 'Accident',   3, 0, 100.00, 0),
+    (@P_AXA, 1, 'Mechanical', 2, 0,  40.00, 7),
+    (@P_AXA, 2, 'Accident',   2, 0,  40.00, 2),
+    (@P_MED, 1, 'Mechanical', 3, 0,  50.00, 10),
+    (@P_MED, 2, 'Accident',   2, 0,  50.00, 3),
+    (@P_BNK, 1, 'Mechanical', 3, 0,  75.00, 5),
+    (@P_BNK, 2, 'Accident',   3, 0,  75.00, 0);
 
 -- Generate 145 additional active policies (Total = 150 Policies)
 ;WITH PolNums AS (

@@ -25,13 +25,15 @@ export default function App() {
   const [policyWarningModal, setPolicyWarningModal] = useState(null);
   const [incomingCallModal, setIncomingCallModal] = useState(null);
 
-  // Call Intake & Eligibility Form State (Empty by default — not pre-filled!)
+  // Call Intake & Eligibility Form State (Customer is separate 1:N parent of InsurancePolicies)
+  const [selectedCustomerId, setSelectedCustomerId] = useState(1);
   const [selectedPolicyId, setSelectedPolicyId] = useState(1);
   const [selectedIncidentType, setSelectedIncidentType] = useState('Mechanical');
   const [eligibility, setEligibility] = useState(null);
   const [intakeForm, setIntakeForm] = useState({
     callerName: '',
     callerPhone: '',
+    hasInsurance: true,
     vehicleDesc: '',
     noPlate: false,
     plateCodeId: 2, // M
@@ -76,10 +78,13 @@ export default function App() {
     minIntervalDays: 7
   });
   const [showTierEditor, setShowTierEditor] = useState(true);
+  const [newCustomerForm, setNewCustomerForm] = useState({
+    fullName: '',
+    phone: '+961-03-',
+    email: ''
+  });
   const [newPolicyForm, setNewPolicyForm] = useState({
-    customerName: '',
-    customerPhone: '+961-03-',
-    customerEmail: '',
+    customerId: 1,
     policyNumber: `POL-2026-${Math.floor(1000 + Math.random() * 9000)}`,
     providerId: 1,
     startDate: '2026-01-01',
@@ -440,7 +445,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerId: policyObj?.customerId || 1,
+          customerId: Number(selectedCustomerId) || policyObj?.customerId || 1,
           callerPhone: intakeForm.callerPhone,
           plateCodeId: intakeForm.noPlate ? null : Number(intakeForm.plateCodeId),
           plateDigits: intakeForm.noPlate ? null : intakeForm.plateDigits.trim(),
@@ -454,8 +459,8 @@ export default function App() {
           destinationAddress: intakeForm.dropoffAddress,
           destinationLat: Number(intakeForm.dropoffLat),
           destinationLng: Number(intakeForm.dropoffLng),
-          hasInsurance: true,
-          policyId: Number(selectedPolicyId),
+          hasInsurance: intakeForm.hasInsurance !== false && Boolean(selectedPolicyId),
+          policyId: intakeForm.hasInsurance !== false && selectedPolicyId ? Number(selectedPolicyId) : null,
           isOutsourced: intakeForm.isOutsourced,
           subcontractorName: intakeForm.isOutsourced ? intakeForm.subcontractorName : null,
           subcontractorFee: intakeForm.isOutsourced ? Number(intakeForm.subcontractorFee) : 0,
@@ -548,7 +553,45 @@ export default function App() {
     }
   };
 
-  // Create New Customer Insurance Policy (Standalone Policies Section)
+  // Switch Selected Customer (1:N: automatically selects first policy of that customer)
+  const handleSelectCustomer = custId => {
+    const cid = Number(custId);
+    setSelectedCustomerId(cid);
+    setNewPolicyForm(prev => ({ ...prev, customerId: cid }));
+    const custPolicies = (dashboard?.policies || []).filter(p => p.customerId === cid);
+    if (custPolicies.length > 0) {
+      setSelectedPolicyId(custPolicies[0].policyId);
+      setIntakeForm(prev => ({ ...prev, hasInsurance: true }));
+    } else {
+      setSelectedPolicyId(0);
+      setIntakeForm(prev => ({ ...prev, hasInsurance: false }));
+    }
+  };
+
+  // Register Standalone Customer in dbo.Customers
+  const handleCreateCustomer = async e => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_BASE}/customers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newCustomerForm)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to register customer');
+      showToast('success', 'Customer Registered', data.message);
+      await fetchDashboard();
+      if (data.customerId) {
+        setSelectedCustomerId(data.customerId);
+        setNewPolicyForm(prev => ({ ...prev, customerId: data.customerId }));
+      }
+      setNewCustomerForm({ fullName: '', phone: '+961-03-', email: '' });
+    } catch (err) {
+      showToast('error', 'Customer Registration Failed', err.message);
+    }
+  };
+
+  // Create New Insurance Policy for Selected Customer (1:N)
   const handleCreatePolicy = async e => {
     e.preventDefault();
     try {
@@ -557,6 +600,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...newPolicyForm,
+          customerId: Number(newPolicyForm.customerId || selectedCustomerId),
           providerId: Number(newPolicyForm.providerId),
           defaultAllowedKm: Number(newPolicyForm.defaultAllowedKm),
           mechanicalAllowedTows: Number(newPolicyForm.mechanicalAllowedTows),
@@ -569,14 +613,14 @@ export default function App() {
       if (!res.ok) throw new Error(data.error || 'Failed to create insurance policy');
       showToast('success', 'Insurance Policy Created', data.message);
       await fetchDashboard();
+      if (data.customerId) {
+        setSelectedCustomerId(data.customerId);
+      }
       if (data.policyId) {
         setSelectedPolicyId(data.policyId);
       }
       setNewPolicyForm(prev => ({
         ...prev,
-        customerName: '',
-        customerPhone: '+961-03-',
-        customerEmail: '',
         policyNumber: `POL-2026-${Math.floor(1000 + Math.random() * 9000)}`
       }));
     } catch (err) {
@@ -757,6 +801,11 @@ export default function App() {
   }
 
   const kpis = dashboard?.kpis || {};
+  const customersList = dashboard?.customers || [];
+  const selectedCustomerObj = customersList.find(c => c.customerId === Number(selectedCustomerId));
+  const customerPolicies = (dashboard?.policies || []).filter(
+    p => p.customerId === Number(selectedCustomerId)
+  );
   const selectedPolicyObj = dashboard?.policies?.find(p => p.policyId === Number(selectedPolicyId));
   const selectedPolicyTiers = selectedPolicyObj?.tiers || [];
   const ongoingJobs = (dashboard?.recentRequests || []).filter(
@@ -1457,21 +1506,57 @@ export default function App() {
                 </div>
 
               <form onSubmit={handleCreateTowRequest} className="intake-form">
-                <div className="form-row">
-                  <label>Select Customer Insurance Policy</label>
-                  <select
-                    value={selectedPolicyId}
-                    onChange={e => {
-                      setSelectedPolicyId(Number(e.target.value));
-                      setTimeout(() => checkEligibility(true), 60);
-                    }}
-                  >
-                    {dashboard?.policies?.map(p => (
-                      <option key={p.policyId} value={p.policyId}>
-                        {p.policyNumber} — {p.customerName} ({p.providerName} • {p.policyStatus})
-                      </option>
-                    ))}
-                  </select>
+                <div className="form-row-2">
+                  <div>
+                    <label>1. Select Customer (dbo.Customers)</label>
+                    <select
+                      value={selectedCustomerId}
+                      onChange={e => {
+                        const cid = Number(e.target.value);
+                        handleSelectCustomer(cid);
+                        const cust = customersList.find(c => c.customerId === cid);
+                        if (cust) {
+                          setIntakeForm(prev => ({
+                            ...prev,
+                            callerName: cust.fullName,
+                            callerPhone: cust.phone
+                          }));
+                        }
+                        setTimeout(() => checkEligibility(true), 60);
+                      }}
+                    >
+                      {customersList.map(c => (
+                        <option key={c.customerId} value={c.customerId}>
+                          {c.fullName} ({c.phone}) — {c.policyCount}{' '}
+                          {c.policyCount === 1 ? 'Policy' : 'Policies'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label>
+                      2. Select Customer&apos;s Insurance Policy ({customerPolicies.length} on file)
+                    </label>
+                    <select
+                      value={selectedPolicyId}
+                      onChange={e => {
+                        const pid = Number(e.target.value);
+                        setSelectedPolicyId(pid);
+                        setIntakeForm(prev => ({ ...prev, hasInsurance: pid > 0 }));
+                        if (pid > 0) {
+                          setTimeout(() => checkEligibility(true), 60);
+                        }
+                      }}
+                    >
+                      {customerPolicies.map(p => (
+                        <option key={p.policyId} value={p.policyId}>
+                          {p.policyNumber} — {p.providerName} ({p.defaultAllowedKm} km •{' '}
+                          {p.policyStatus})
+                        </option>
+                      ))}
+                      <option value={0}>💵 No Insurance Policy / Direct Cash Call</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div className="form-row-2">
@@ -1824,217 +1909,255 @@ export default function App() {
         {/* STANDALONE TAB: INSURANCE POLICIES FILLING & SEQUENTIAL QUOTA TIER MANAGEMENT */}
         {activeTab === 'policies' && (
           <div className="grid-2">
-            {/* Left Column: Create / Fill New Insurance Policy */}
-            <div className="card">
-              <div className="card-header-flex">
-                <div>
-                  <h3>🛡️ Fill / Create New Insurance Policy</h3>
-                  <p className="muted">
-                    Creates a Customer, Insurance Policy, and Sequential Quota Tiers inside an ACID
-                    SQL Server transaction (<code>dbo.Customers</code> +{' '}
-                    <code>dbo.InsurancePolicies</code> + <code>dbo.PolicyQuotaTiers</code>)
-                  </p>
+            {/* Left Column: 1) Register Customer (dbo.Customers) + 2) Attach New Policy to Customer (1:N) */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div className="card">
+                <div className="card-header-flex">
+                  <div>
+                    <h3>👤 1. Register New Customer (dbo.Customers)</h3>
+                    <p className="muted">
+                      Customers are stored separately in <code>dbo.Customers</code> so one customer
+                      can hold multiple policies in <code>dbo.InsurancePolicies</code> (1:N).
+                    </p>
+                  </div>
+                  <span className="seq-badge">1:N Parent Entity</span>
                 </div>
-                <span className="seq-badge">ACID Transaction</span>
+
+                <form onSubmit={handleCreateCustomer} className="intake-form">
+                  <div className="form-row-3">
+                    <div>
+                      <label>Customer Full Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g., Rami Kanaan"
+                        value={newCustomerForm.fullName}
+                        onChange={e =>
+                          setNewCustomerForm({ ...newCustomerForm, fullName: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label>Customer Phone (Unique)</label>
+                      <input
+                        type="text"
+                        placeholder="+961-03-889900"
+                        value={newCustomerForm.phone}
+                        onChange={e =>
+                          setNewCustomerForm({ ...newCustomerForm, phone: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label>Customer Email</label>
+                      <input
+                        type="email"
+                        placeholder="customer@domain.com"
+                        value={newCustomerForm.email}
+                        onChange={e =>
+                          setNewCustomerForm({ ...newCustomerForm, email: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <button type="submit" className="btn-erp-primary">
+                    ➕ Register Customer in dbo.Customers
+                  </button>
+                </form>
               </div>
 
-              <form onSubmit={handleCreatePolicy} className="intake-form">
-                <div className="form-row-3">
+              <div className="card">
+                <div className="card-header-flex">
                   <div>
-                    <label>Customer Full Name</label>
-                    <input
-                      type="text"
-                      placeholder="e.g., Rami Kanaan"
-                      value={newPolicyForm.customerName}
-                      onChange={e =>
-                        setNewPolicyForm({ ...newPolicyForm, customerName: e.target.value })
-                      }
-                      required
-                    />
+                    <h3>🛡️ 2. Attach New Insurance Policy to Customer</h3>
+                    <p className="muted">
+                      Links a new policy in <code>dbo.InsurancePolicies</code> and sequential quota
+                      tiers in <code>dbo.PolicyQuotaTiers</code> to the selected customer.
+                    </p>
                   </div>
-                  <div>
-                    <label>Customer Phone</label>
-                    <input
-                      type="text"
-                      placeholder="+961-03-889900"
-                      value={newPolicyForm.customerPhone}
-                      onChange={e =>
-                        setNewPolicyForm({ ...newPolicyForm, customerPhone: e.target.value })
-                      }
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label>Customer Email</label>
-                    <input
-                      type="email"
-                      placeholder="customer@domain.com"
-                      value={newPolicyForm.customerEmail}
-                      onChange={e =>
-                        setNewPolicyForm({ ...newPolicyForm, customerEmail: e.target.value })
-                      }
-                    />
-                  </div>
+                  <span className="seq-badge">ACID Transaction</span>
                 </div>
 
-                <div className="form-row-2">
-                  <div>
-                    <label>Insurance Provider</label>
+                <form onSubmit={handleCreatePolicy} className="intake-form">
+                  <div className="form-row">
+                    <label>Select Customer (Can Hold Multiple Policies)</label>
                     <select
-                      value={newPolicyForm.providerId}
-                      onChange={e =>
-                        setNewPolicyForm({
-                          ...newPolicyForm,
-                          providerId: Number(e.target.value)
-                        })
-                      }
+                      value={newPolicyForm.customerId || selectedCustomerId}
+                      onChange={e => {
+                        const cid = Number(e.target.value);
+                        setNewPolicyForm({ ...newPolicyForm, customerId: cid });
+                        handleSelectCustomer(cid);
+                      }}
                     >
-                      <option value={1}>Allianz SNA Lebanon (ALLIANZ-LB)</option>
-                      <option value={2}>Bankers Assurance SAL (BANKERS-LB)</option>
-                      <option value={3}>AXA Middle East SAL (AXA-ME)</option>
-                      <option value={4}>Medgulf Insurance SAL (MEDGULF-LB)</option>
-                      <option value={5}>Fidelity Insurance Group (FIDELITY-LB)</option>
-                      <option value={6}>LIA Assurex SAL (LIA-LB)</option>
+                      {customersList.map(c => (
+                        <option key={c.customerId} value={c.customerId}>
+                          #{c.customerId} — {c.fullName} ({c.phone}) • Currently {c.policyCount}{' '}
+                          {c.policyCount === 1 ? 'Policy' : 'Policies'}
+                        </option>
+                      ))}
                     </select>
                   </div>
-                  <div>
-                    <label>Policy Number (Unique)</label>
-                    <input
-                      type="text"
-                      placeholder="e.g., POL-2026-09999"
-                      value={newPolicyForm.policyNumber}
-                      onChange={e =>
-                        setNewPolicyForm({ ...newPolicyForm, policyNumber: e.target.value })
-                      }
-                      required
-                    />
-                  </div>
-                </div>
 
-                <div className="form-row-3">
-                  <div>
-                    <label>Effective Start Date</label>
-                    <input
-                      type="date"
-                      value={newPolicyForm.startDate}
-                      onChange={e =>
-                        setNewPolicyForm({ ...newPolicyForm, startDate: e.target.value })
-                      }
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label>Expiration Date</label>
-                    <input
-                      type="date"
-                      value={newPolicyForm.expirationDate}
-                      onChange={e =>
-                        setNewPolicyForm({ ...newPolicyForm, expirationDate: e.target.value })
-                      }
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label>Max Covered Distance (km)</label>
-                    <input
-                      type="number"
-                      min="5"
-                      max="500"
-                      value={newPolicyForm.maxDistanceKm}
-                      onChange={e =>
-                        setNewPolicyForm({
-                          ...newPolicyForm,
-                          maxDistanceKm: Number(e.target.value)
-                        })
-                      }
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="tier-edit-box" style={{ marginTop: '4px' }}>
-                  <h5>⚙️ Initial Sequential Quota Tiers &amp; Cooldown Rules</h5>
-                  <div className="form-row-2" style={{ marginTop: '8px' }}>
+                  <div className="form-row-2">
                     <div>
-                      <label>Tier #1 — Mechanical Breakdown Allowed Tows</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="20"
-                        value={newPolicyForm.mechanicalAllowedTows}
+                      <label>Insurance Provider</label>
+                      <select
+                        value={newPolicyForm.providerId}
                         onChange={e =>
                           setNewPolicyForm({
                             ...newPolicyForm,
-                            mechanicalAllowedTows: Number(e.target.value)
+                            providerId: Number(e.target.value)
                           })
                         }
-                      />
+                      >
+                        <option value={1}>Allianz SNA Lebanon (ALLIANZ-LB)</option>
+                        <option value={2}>Bankers Assurance SAL (BANKERS-LB)</option>
+                        <option value={3}>AXA Middle East SAL (AXA-ME)</option>
+                        <option value={4}>Medgulf Insurance SAL (MEDGULF-LB)</option>
+                        <option value={5}>Fidelity Insurance Group (FIDELITY-LB)</option>
+                        <option value={6}>LIA Assurex SAL (LIA-LB)</option>
+                      </select>
                     </div>
                     <div>
-                      <label>Tier #1 — Mechanical Cooldown Interval (Days)</label>
+                      <label>Policy Number (Unique)</label>
                       <input
-                        type="number"
-                        min="0"
-                        max="365"
-                        value={newPolicyForm.mechanicalCooldownDays}
+                        type="text"
+                        placeholder="e.g., POL-2026-09999"
+                        value={newPolicyForm.policyNumber}
                         onChange={e =>
-                          setNewPolicyForm({
-                            ...newPolicyForm,
-                            mechanicalCooldownDays: Number(e.target.value)
-                          })
+                          setNewPolicyForm({ ...newPolicyForm, policyNumber: e.target.value })
                         }
+                        required
                       />
                     </div>
                   </div>
 
-                  <div className="form-row-2" style={{ marginTop: '8px' }}>
+                  <div className="form-row-3">
                     <div>
-                      <label>Tier #2 — Accident Recovery Allowed Tows</label>
+                      <label>Effective Start Date</label>
                       <input
-                        type="number"
-                        min="0"
-                        max="20"
-                        value={newPolicyForm.accidentAllowedTows}
+                        type="date"
+                        value={newPolicyForm.startDate}
                         onChange={e =>
-                          setNewPolicyForm({
-                            ...newPolicyForm,
-                            accidentAllowedTows: Number(e.target.value)
-                          })
+                          setNewPolicyForm({ ...newPolicyForm, startDate: e.target.value })
                         }
+                        required
                       />
                     </div>
                     <div>
-                      <label>Tier #2 — Accident Cooldown Interval (Days)</label>
+                      <label>Expiration Date</label>
+                      <input
+                        type="date"
+                        value={newPolicyForm.expirationDate}
+                        onChange={e =>
+                          setNewPolicyForm({ ...newPolicyForm, expirationDate: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label>Max Covered Distance (km)</label>
                       <input
                         type="number"
-                        min="0"
-                        max="365"
-                        value={newPolicyForm.accidentCooldownDays}
+                        min="5"
+                        max="500"
+                        value={newPolicyForm.defaultAllowedKm}
                         onChange={e =>
                           setNewPolicyForm({
                             ...newPolicyForm,
-                            accidentCooldownDays: Number(e.target.value)
+                            defaultAllowedKm: Number(e.target.value)
                           })
                         }
+                        required
                       />
                     </div>
                   </div>
-                </div>
 
-                <button type="submit" className="btn-primary">
-                  ➕ Save New Insurance Policy &amp; Quota Tiers in SQL Server
-                </button>
-              </form>
+                  <div className="tier-edit-box" style={{ marginTop: '4px' }}>
+                    <h5>⚙️ Initial Sequential Quota Tiers &amp; Cooldown Rules</h5>
+                    <div className="form-row-2" style={{ marginTop: '8px' }}>
+                      <div>
+                        <label>Tier #1 — Mechanical Breakdown Allowed Tows</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="20"
+                          value={newPolicyForm.mechanicalAllowedTows}
+                          onChange={e =>
+                            setNewPolicyForm({
+                              ...newPolicyForm,
+                              mechanicalAllowedTows: Number(e.target.value)
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label>Tier #1 — Mechanical Cooldown Interval (Days)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="365"
+                          value={newPolicyForm.mechanicalCooldownDays}
+                          onChange={e =>
+                            setNewPolicyForm({
+                              ...newPolicyForm,
+                              mechanicalCooldownDays: Number(e.target.value)
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-row-2" style={{ marginTop: '8px' }}>
+                      <div>
+                        <label>Tier #2 — Accident Recovery Allowed Tows</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="20"
+                          value={newPolicyForm.accidentAllowedTows}
+                          onChange={e =>
+                            setNewPolicyForm({
+                              ...newPolicyForm,
+                              accidentAllowedTows: Number(e.target.value)
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label>Tier #2 — Accident Cooldown Interval (Days)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="365"
+                          value={newPolicyForm.accidentCooldownDays}
+                          onChange={e =>
+                            setNewPolicyForm({
+                              ...newPolicyForm,
+                              accidentCooldownDays: Number(e.target.value)
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button type="submit" className="btn-primary">
+                    ➕ Attach New Insurance Policy to {selectedCustomerObj?.fullName || 'Customer'}
+                  </button>
+                </form>
+              </div>
             </div>
 
-            {/* Right Column: Inspect & Edit Existing Policy Quotas & Cooldown Tiers */}
+            {/* Right Column: Filter by Customer -> Select One of Their Policies -> Edit Sequential Tiers */}
             <div className="card">
               <div className="card-header-flex">
                 <div>
-                  <h3>📑 Policy Directory &amp; Sequential Quota Tier Editor</h3>
+                  <h3>📑 Customer Policies &amp; Sequential Quota Tier Editor</h3>
                   <p className="muted">
-                    Select any insurance policy to inspect or modify its sequential coverage tiers,
-                    distance caps, and cooldown intervals in <code>dbo.PolicyQuotaTiers</code>.
+                    Select a customer to view all of their insurance policies (1:N), then select any
+                    policy to configure its <code>dbo.PolicyQuotaTiers</code> rules.
                   </p>
                 </div>
                 <button
@@ -2046,24 +2169,45 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="form-row" style={{ marginBottom: '12px' }}>
-                <label>Select Insurance Policy to Inspect / Configure</label>
-                <select
-                  value={selectedPolicyId}
-                  onChange={e => {
-                    const pid = Number(e.target.value);
-                    setSelectedPolicyId(pid);
-                    setIntakeForm(prev => ({ ...prev, policyId: pid }));
-                    setEditingTier(null);
-                  }}
-                >
-                  {dashboard?.policies?.map(p => (
-                    <option key={p.policyId} value={p.policyId}>
-                      {p.policyNumber} — {p.customerName} ({p.providerName}) | Exp:{' '}
-                      {p.expirationDate?.slice(0, 10)}
-                    </option>
-                  ))}
-                </select>
+              <div className="form-row-2" style={{ marginBottom: '12px' }}>
+                <div>
+                  <label>1. Select Customer (dbo.Customers)</label>
+                  <select
+                    value={selectedCustomerId}
+                    onChange={e => {
+                      handleSelectCustomer(Number(e.target.value));
+                      setEditingTier(null);
+                    }}
+                  >
+                    {customersList.map(c => (
+                      <option key={c.customerId} value={c.customerId}>
+                        {c.fullName} ({c.phone}) — {c.policyCount}{' '}
+                        {c.policyCount === 1 ? 'Policy' : 'Policies'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label>
+                    2. Select Policy of {selectedCustomerObj?.fullName || 'Customer'} (
+                    {customerPolicies.length} Policies)
+                  </label>
+                  <select
+                    value={selectedPolicyId}
+                    onChange={e => {
+                      const pid = Number(e.target.value);
+                      setSelectedPolicyId(pid);
+                      setEditingTier(null);
+                    }}
+                  >
+                    {customerPolicies.map(p => (
+                      <option key={p.policyId} value={p.policyId}>
+                        {p.policyNumber} — {p.providerName} ({p.defaultAllowedKm} km • Exp:{' '}
+                        {p.expirationDate?.slice(0, 10)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               {selectedPolicyObj && (
@@ -2073,12 +2217,12 @@ export default function App() {
                     <strong>{selectedPolicyObj.policyNumber}</strong>
                   </div>
                   <div className="metric-item">
-                    <span>Policyholder</span>
+                    <span>Customer</span>
                     <strong>{selectedPolicyObj.customerName}</strong>
                   </div>
                   <div className="metric-item">
                     <span>Phone</span>
-                    <strong>{selectedPolicyObj.phone}</strong>
+                    <strong>{selectedPolicyObj.customerPhone}</strong>
                   </div>
                   <div className="metric-item">
                     <span>Provider</span>
@@ -2086,13 +2230,11 @@ export default function App() {
                   </div>
                   <div className="metric-item">
                     <span>Max Free Tow</span>
-                    <strong>{selectedPolicyObj.maxCoveredDistanceKm} km</strong>
+                    <strong>{selectedPolicyObj.defaultAllowedKm} km</strong>
                   </div>
                   <div className="metric-item">
-                    <span>Total Quota Used</span>
-                    <strong>
-                      {selectedPolicyObj.usedTowsCount} / {selectedPolicyObj.totalAllowedTows}
-                    </strong>
+                    <span>Status</span>
+                    <strong>{selectedPolicyObj.policyStatus}</strong>
                   </div>
                 </div>
               )}

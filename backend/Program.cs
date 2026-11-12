@@ -167,10 +167,40 @@ app.MapGet("/api/dashboard", async () =>
         }
     }
 
-    // 3. Featured Customers & Policies with Sequential Quota Tiers & Cooldown Days
+    // 3. Featured Customers (1:N parent table dbo.Customers) & Their Multiple Policies
+    var customers = new List<object>();
+    const string customerSql = @"
+        SELECT
+            c.CustomerId,
+            c.FullName,
+            c.Phone,
+            ISNULL(c.Email, '') AS Email,
+            COUNT(p.PolicyId) AS PolicyCount
+        FROM dbo.Customers AS c
+        LEFT JOIN dbo.InsurancePolicies AS p ON c.CustomerId = p.CustomerId
+        WHERE c.CustomerId <= 20 OR c.CustomerId > 200
+        GROUP BY c.CustomerId, c.FullName, c.Phone, c.Email
+        ORDER BY CASE WHEN c.CustomerId > 200 THEN 0 ELSE 1 END, c.CustomerId ASC;";
+
+    await using (var cmd = new SqlCommand(customerSql, conn))
+    await using (var reader = await cmd.ExecuteReaderAsync())
+    {
+        while (await reader.ReadAsync())
+        {
+            customers.Add(new
+            {
+                customerId = reader.GetInt32(0),
+                fullName = reader.GetString(1),
+                phone = reader.GetString(2),
+                email = reader.GetString(3),
+                policyCount = reader.GetInt32(4)
+            });
+        }
+    }
+
     var policies = new List<object>();
     const string policySql = @"
-        SELECT TOP (35)
+        SELECT
             p.PolicyId,
             p.PolicyNumber,
             p.CustomerId,
@@ -185,8 +215,8 @@ app.MapGet("/api/dashboard", async () =>
         FROM dbo.InsurancePolicies AS p
         INNER JOIN dbo.Customers AS c ON p.CustomerId = c.CustomerId
         INNER JOIN dbo.InsuranceProviders AS pr ON p.ProviderId = pr.ProviderId
-        WHERE p.PolicyId <= 20 OR p.PolicyId > 2000
-        ORDER BY CASE WHEN p.PolicyId > 2000 THEN 0 ELSE 1 END, p.PolicyId DESC;";
+        WHERE p.CustomerId <= 20 OR p.CustomerId > 200 OR p.PolicyId <= 20 OR p.PolicyId > 150
+        ORDER BY p.CustomerId ASC, p.PolicyId ASC;";
 
     var rawPolicies = new List<Dictionary<string, object?>>();
     await using (var cmd = new SqlCommand(policySql, conn))
@@ -214,11 +244,12 @@ app.MapGet("/api/dashboard", async () =>
     }
 
     const string tierSql = @"
-        SELECT QuotaTierId, PolicyId, TierSequence, CoverageType, AllowedTows, UsedTows,
-               (AllowedTows - UsedTows) AS RemainingTows, MaxDistanceKm, MinIntervalDays
-        FROM dbo.PolicyQuotaTiers
-        WHERE PolicyId <= 20 OR PolicyId > 2000
-        ORDER BY PolicyId ASC, TierSequence ASC, QuotaTierId ASC;";
+        SELECT qt.QuotaTierId, qt.PolicyId, qt.TierSequence, qt.CoverageType, qt.AllowedTows, qt.UsedTows,
+               (qt.AllowedTows - qt.UsedTows) AS RemainingTows, qt.MaxDistanceKm, qt.MinIntervalDays
+        FROM dbo.PolicyQuotaTiers AS qt
+        INNER JOIN dbo.InsurancePolicies AS p ON qt.PolicyId = p.PolicyId
+        WHERE p.CustomerId <= 20 OR p.CustomerId > 200 OR p.PolicyId <= 20 OR p.PolicyId > 150
+        ORDER BY qt.PolicyId ASC, qt.TierSequence ASC, qt.QuotaTierId ASC;";
 
     var tiersByPolicy = new Dictionary<int, List<object>>();
     await using (var cmd = new SqlCommand(tierSql, conn))
@@ -463,6 +494,7 @@ app.MapGet("/api/dashboard", async () =>
     {
         kpis,
         plateCodes,
+        customers,
         policies,
         trucks,
         priorityQueue,
@@ -795,6 +827,38 @@ app.MapPost("/api/policies/{policyId:int}/tiers", async (int policyId, UpdateQuo
     }
 });
 
+app.MapPost("/api/customers", async (CreateCustomerDto dto) =>
+{
+    try
+    {
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        const string sql = @"
+            INSERT INTO dbo.Customers (FullName, Phone, Email)
+            VALUES (@FullName, @Phone, @Email);
+            SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+        await using var cmd = new SqlCommand(sql, conn);
+        cmd.Parameters.Add("@FullName", SqlDbType.NVarChar, 120).Value = dto.FullName;
+        cmd.Parameters.Add("@Phone", SqlDbType.VarChar, 30).Value = dto.Phone;
+        cmd.Parameters.Add("@Email", SqlDbType.VarChar, 120).Value = (object?)dto.Email ?? DBNull.Value;
+
+        var newCustIdObj = await cmd.ExecuteScalarAsync();
+        int newCustId = Convert.ToInt32(newCustIdObj);
+
+        return Results.Ok(new
+        {
+            success = true,
+            customerId = newCustId,
+            fullName = dto.FullName,
+            message = $"Customer '{dto.FullName}' registered in dbo.Customers (ID #{newCustId}). You can now attach multiple insurance policies to this customer."
+        });
+    }
+    catch (SqlException ex)
+    {
+        return Results.BadRequest(new { success = false, error = ex.Message });
+    }
+});
+
 app.MapPost("/api/policies", async (CreatePolicyDto dto) =>
 {
     try
@@ -804,13 +868,16 @@ app.MapPost("/api/policies", async (CreatePolicyDto dto) =>
             SET XACT_ABORT ON;
             BEGIN TRANSACTION;
 
-            DECLARE @CustId INT;
-            SELECT @CustId = CustomerId FROM dbo.Customers WHERE Phone = @Phone;
-            IF @CustId IS NULL
+            DECLARE @CustId INT = @InputCustomerId;
+            IF @CustId IS NULL OR @CustId <= 0
             BEGIN
-                INSERT INTO dbo.Customers (FullName, Phone, Email)
-                VALUES (@FullName, @Phone, @Email);
-                SET @CustId = SCOPE_IDENTITY();
+                SELECT @CustId = CustomerId FROM dbo.Customers WHERE Phone = @Phone;
+                IF @CustId IS NULL
+                BEGIN
+                    INSERT INTO dbo.Customers (FullName, Phone, Email)
+                    VALUES (@FullName, @Phone, @Email);
+                    SET @CustId = SCOPE_IDENTITY();
+                END
             END
 
             INSERT INTO dbo.InsurancePolicies (
@@ -830,11 +897,12 @@ app.MapPost("/api/policies", async (CreatePolicyDto dto) =>
                 (@NewPolicyId, 2, 'Accident',   @AccidentAllowedTows,   0, @DefaultAllowedKm, @AccidentCooldownDays);
 
             COMMIT TRANSACTION;
-            SELECT @NewPolicyId AS NewPolicyId;";
+            SELECT @NewPolicyId AS NewPolicyId, @CustId AS FinalCustomerId;";
 
         await using var cmd = new SqlCommand(sql, conn);
-        cmd.Parameters.Add("@FullName", SqlDbType.NVarChar, 120).Value = dto.CustomerName;
-        cmd.Parameters.Add("@Phone", SqlDbType.VarChar, 30).Value = dto.CustomerPhone;
+        cmd.Parameters.Add("@InputCustomerId", SqlDbType.Int).Value = (object?)dto.CustomerId ?? DBNull.Value;
+        cmd.Parameters.Add("@FullName", SqlDbType.NVarChar, 120).Value = (object?)dto.CustomerName ?? "";
+        cmd.Parameters.Add("@Phone", SqlDbType.VarChar, 30).Value = (object?)dto.CustomerPhone ?? "";
         cmd.Parameters.Add("@Email", SqlDbType.VarChar, 120).Value = (object?)dto.CustomerEmail ?? DBNull.Value;
         cmd.Parameters.Add("@PolicyNumber", SqlDbType.VarChar, 40).Value = dto.PolicyNumber;
         cmd.Parameters.Add("@ProviderId", SqlDbType.Int).Value = dto.ProviderId;
@@ -847,15 +915,24 @@ app.MapPost("/api/policies", async (CreatePolicyDto dto) =>
         cmd.Parameters.Add("@AccidentAllowedTows", SqlDbType.Int).Value = dto.AccidentAllowedTows;
         cmd.Parameters.Add("@AccidentCooldownDays", SqlDbType.Int).Value = dto.AccidentCooldownDays;
 
-        var newIdObj = await cmd.ExecuteScalarAsync();
-        int newPolicyId = Convert.ToInt32(newIdObj);
+        int newPolicyId = 0;
+        int finalCustomerId = dto.CustomerId ?? 1;
+        await using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            if (await reader.ReadAsync())
+            {
+                newPolicyId = reader.GetInt32(0);
+                finalCustomerId = reader.GetInt32(1);
+            }
+        }
 
         return Results.Ok(new
         {
             success = true,
             policyId = newPolicyId,
+            customerId = finalCustomerId,
             policyNumber = dto.PolicyNumber,
-            message = $"Policy '{dto.PolicyNumber}' created for {dto.CustomerName} with sequential Mechanical & Accident quota tiers."
+            message = $"Policy '{dto.PolicyNumber}' created and linked to Customer ID #{finalCustomerId} with sequential Mechanical & Accident quota tiers."
         });
     }
     catch (SqlException ex)
@@ -1249,9 +1326,11 @@ public record OptimisticEditDto(string IssueType, string IssueNotes, string Expe
 public record ReorderQueueDto(int TowRequestId, string Direction);
 public record CreatePlateCodeDto(string Code, string RegionDescription, int DisplaySequence);
 public record UpdateQuotaTierDto(int TierSequence, string CoverageType, int AllowedTows, int UsedTows, decimal MaxDistanceKm, int MinIntervalDays);
+public record CreateCustomerDto(string FullName, string Phone, string? Email);
 public record CreatePolicyDto(
-    string CustomerName,
-    string CustomerPhone,
+    int? CustomerId,
+    string? CustomerName,
+    string? CustomerPhone,
     string? CustomerEmail,
     string PolicyNumber,
     int ProviderId,
