@@ -274,6 +274,25 @@ CREATE TABLE dbo.TowAuditLogs
 GO
 
 /*==============================================================================
+  9. TABLE: dbo.SystemUsers
+  Authenticated Command Portal operators (Dispatchers, Fleet Managers, Claims)
+==============================================================================*/
+CREATE TABLE dbo.SystemUsers
+(
+    UserId          INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_SystemUsers PRIMARY KEY,
+    Username        VARCHAR(60)       NOT NULL CONSTRAINT UQ_SystemUsers_Username UNIQUE,
+    PasswordSalt    VARCHAR(64)       NOT NULL,
+    PasswordHash    VARBINARY(64)     NOT NULL, -- 512-bit Salted SHA2_512 Cryptographic Hash
+    FullName        NVARCHAR(120)     NOT NULL,
+    RoleTitle       NVARCHAR(80)      NOT NULL,
+    Department      NVARCHAR(80)      NOT NULL,
+    StationCode     VARCHAR(30)       NOT NULL,
+    IsActive        BIT               NOT NULL CONSTRAINT DF_SystemUsers_IsActive DEFAULT (1),
+    LastLoginAt     DATETIME2(0)      NULL
+);
+GO
+
+/*==============================================================================
   PERFORMANCE INDEXES ON THE >120,000-ROW TABLE (dbo.TowRequests)
   Designed for SARGable filters with INCLUDE columns to achieve:
   - Index Seek

@@ -14,11 +14,28 @@ const KANBAN_STAGES = [
   { key: 'InProgress', label: '4. In Progress', color: '#8b5cf6' },
   { key: 'UnableToLoad', label: '5. Unable to Load (Locked)', color: '#f97316' },
   { key: 'Done', label: '6. Done (Locked)', color: '#10b981' },
-  { key: 'Rejected', label: '7. Rejected (Locked)', color: '#ef4444' }
+  { key: '× Rejected', label: '7. × Rejected (Locked)', color: '#ef4444' }
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('map'); // 'map' | 'intake' | 'queue' | 'concurrency' | 'performance'
+  // Authenticated Operator Session (Backed by SQL Server dbo.SystemUsers)
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('tracker_operator_session');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [loginForm, setLoginForm] = useState({
+    username: 'assaad.khalife',
+    password: ''
+  });
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
+  const [activeTab, setActiveTab] = useState('map'); // 'map' | 'intake' | 'policies' | 'queue' | 'concurrency' | 'performance'
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
@@ -130,6 +147,48 @@ export default function App() {
     setTimeout(() => setToast(null), 6500);
   };
 
+  const handleLoginSubmit = async e => {
+    e.preventDefault();
+    setLoginError('');
+    setLoginLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: loginForm.username.trim(),
+          password: loginForm.password
+        })
+      });
+      if (!res.ok) {
+        setLoginError('Invalid operator username or password. Please verify your Tracker Connect™ credentials.');
+        setLoginLoading(false);
+        return;
+      }
+      const data = await res.json();
+      if (data.success && data.user) {
+        sessionStorage.setItem('tracker_operator_session', JSON.stringify(data.user));
+        setCurrentUser(data.user);
+        showToast(
+          'success',
+          `Welcome back, ${data.user.fullName}`,
+          `Connected to ${data.user.department} (${data.user.stationCode})`
+        );
+      }
+    } catch (err) {
+      setLoginError('Unable to reach authentication server: ' + err.message);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('tracker_operator_session');
+    setCurrentUser(null);
+    setLoginForm({ username: 'assaad.khalife', password: '' });
+    setLoginError('');
+  };
+
   const fetchDashboard = async () => {
     try {
       const res = await fetch(`${API_BASE}/dashboard`);
@@ -168,13 +227,13 @@ export default function App() {
           data.remainingCategoryTows <= 0
         ) {
           setPolicyWarningModal({
-            title: '🚨 Accident Tow Not Allowed',
+            title: 'Accident Tow Not Allowed',
             message: `The insurance policy '${policyLabel}' does not allow any accidental tows anymore! Remaining accident tows: 0. Direct customer billing is required.`,
             reason: data.statusBanner
           });
         } else if (!data.isEligible) {
           setPolicyWarningModal({
-            title: '⚠️ Policy Quota / Cooldown Restriction',
+            title: 'Policy Quota / Cooldown Restriction',
             message: data.statusBanner,
             reason: `Days since last tow: ${data.daysSinceLastTow ?? 'N/A'} days | Min required cooldown interval: ${data.requiredCooldownDays} days`
           });
@@ -421,7 +480,7 @@ export default function App() {
     setActiveTab('intake');
     showToast(
       'success',
-      '📞 Incoming Call Answered',
+      'Incoming Call Answered',
       `Caller phone ${phoneStr} connected. Please enter the caller's details and breakdown location.`
     );
   };
@@ -664,7 +723,7 @@ export default function App() {
         body: JSON.stringify({
           newStatus,
           cashCollected: newStatus === 'Done' ? 15.0 : 0.0,
-          rejectionReason: newStatus === 'Rejected' ? 'Rejected by Dispatcher' : null
+          rejectionReason: newStatus === '× Rejected' ? '× Rejected by Dispatcher' : null
         })
       });
       const data = await res.json();
@@ -687,7 +746,7 @@ export default function App() {
       if (data.blockedByTrigger) {
         showToast(
           'error',
-          `🔒 SQL Trigger Blocked Undo (Err ${data.sqlErrorNumber})`,
+          `SQL Trigger Blocked Undo (Err ${data.sqlErrorNumber})`,
           data.triggerMessage
         );
       } else {
@@ -794,8 +853,8 @@ export default function App() {
     return (
       <div className="loading-screen">
         <div className="spinner"></div>
-        <h2>Connecting to SQL Server (GIN401_TowDispatch)...</h2>
-        <p>Verifying 120,000+ rows in dbo.TowRequests &amp; least-privilege role...</p>
+        <h2>Initializing Tracker Connect™ Command Center...</h2>
+        <p>Connecting to National Fleet Telemetry, Insurance Partner Gateway &amp; Dispatch Database...</p>
       </div>
     );
   }
@@ -816,15 +875,269 @@ export default function App() {
       r.status === 'InProgress'
   );
 
+  // ============================================================================
+  // TRACKER-INSPIRED WELCOME & OPERATOR LOGIN PORTAL (https://www.tracker.co.za/)
+  // ============================================================================
+  if (!currentUser) {
+    const operatorProfiles = [
+      {
+        username: 'assaad.khalife',
+        password: 'Tracker@2026',
+        name: 'Assaad Khalife',
+        role: 'Chief Operations & CAD Director',
+        station: 'BEY-CMD-01'
+      },
+      {
+        username: 'dispatch.beirut',
+        password: 'Dispatch@2026',
+        name: 'Rami Nassar',
+        role: 'Senior Emergency Dispatcher',
+        station: 'BEY-DSK-04'
+      },
+      {
+        username: 'fleet.manager',
+        password: 'Fleet@2026',
+        name: 'Karim Haddad',
+        role: 'Fleet & Recovery Supervisor',
+        station: 'BEY-FLT-02'
+      },
+      {
+        username: 'claims.underwriter',
+        password: 'Claims@2026',
+        name: 'Maya Khoury',
+        role: 'Insurance Policy Specialist',
+        station: 'BEY-INS-01'
+      }
+    ];
+
+    return (
+      <div className="tracker-welcome-page">
+        {/* Top Emergency & Telemetry Status Ribbon */}
+        <div className="tracker-top-ribbon">
+          <div className="tracker-ribbon-inner">
+            <div className="tracker-ribbon-left">
+              <span className="tracker-pulse-dot"></span>
+              <strong>24/7 NATIONAL ROADSIDE &amp; ACCIDENT COMMAND: 1544</strong>
+              <span className="tracker-ribbon-sep">|</span>
+              <span>Beirut • Mount Lebanon • North • Bekaa • South</span>
+            </div>
+            <div className="tracker-ribbon-right">
+              <span>GPS Telemetry: 99.98% Online</span>
+              <span>{dashboard?.trucks?.length || 12} Recovery Units Active</span>
+              <span>6 Partner Insurers Linked</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Tracker Main Public Navigation Bar */}
+        <header className="tracker-public-nav">
+          <div className="tracker-nav-inner">
+            <div className="tracker-brand-logo">
+              <div className="tracker-emblem">
+                <span>T</span>
+              </div>
+              <div>
+                <div className="tracker-brand-title">
+                  TRACKER <span>CONNECT™</span>
+                </div>
+                <div className="tracker-brand-sub">
+                  ROADSIDE ASSISTANCE, INSURANCE QUOTA &amp; FLEET CAD
+                </div>
+              </div>
+            </div>
+
+            <nav className="tracker-public-links">
+              <a href="#solutions">For Individuals</a>
+              <a href="#fleetlogic">FleetLogic™ Business</a>
+              <a href="#roadside">Roadside &amp; Accident Assist</a>
+              <a href="#insurers">Insurance Partners</a>
+            </nav>
+
+            <div className="tracker-nav-cta">
+              <div className="tracker-hotline-pill">
+                <span>Emergency Line</span>
+                <strong>1544</strong>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Hero Split Section: Product Showcase + Operator Sign-In Portal */}
+        <section className="tracker-hero-section">
+          <div className="tracker-hero-inner">
+            {/* Left Column: Tracker Brand & Product Value Proposition */}
+            <div className="tracker-hero-copy">
+              <div className="tracker-eyebrow-pill">
+                <span>CONNECTED VEHICLE TELEMATICS &amp; 24/7 RECOVERY</span>
+              </div>
+              <h1>
+                To care is to protect —{' '}
+                <span className="tracker-accent-text">
+                  every vehicle, every kilometer, every call.
+                </span>
+              </h1>
+              <p className="tracker-hero-lead">
+                Tracker Connect™ unifies 24/7 emergency roadside intake, real-time Google Maps GPS
+                fleet dispatch, multi-policy insurance quota verification, and automated driver
+                settlement into one mission-critical command platform.
+              </p>
+
+              {/* Live Operational Metrics Grid */}
+              <div className="tracker-stats-grid">
+                <div className="tracker-stat-card">
+                  <div className="tracker-stat-num">
+                    {(kpis.totalTowRequests || 120013).toLocaleString()}+
+                  </div>
+                  <div className="tracker-stat-label">National Dispatches Logged</div>
+                </div>
+                <div className="tracker-stat-card">
+                  <div className="tracker-stat-num">&lt; 14 Min</div>
+                  <div className="tracker-stat-label">Average Urban Recovery ETA</div>
+                </div>
+                <div className="tracker-stat-card">
+                  <div className="tracker-stat-num">{kpis.availableTrucks || 8} / 12</div>
+                  <div className="tracker-stat-label">Units Ready for Immediate Dispatch</div>
+                </div>
+                <div className="tracker-stat-card">
+                  <div className="tracker-stat-num">100%</div>
+                  <div className="tracker-stat-label">Real-Time Policy &amp; Cooldown Checks</div>
+                </div>
+              </div>
+
+              {/* Product Pillars */}
+              <div className="tracker-pillars" id="solutions">
+                <div className="tracker-pillar-item">
+                  <div className="tracker-pillar-icon">01</div>
+                  <div>
+                    <h4>24/7 Roadside &amp; Accident Assist</h4>
+                    <p>
+                      Instant caller CTI identification, precision GPS pin drop, OSRM road-distance
+                      routing, and automated overage billing.
+                    </p>
+                  </div>
+                </div>
+                <div className="tracker-pillar-item" id="fleetlogic">
+                  <div className="tracker-pillar-icon">02</div>
+                  <div>
+                    <h4>FleetLogic™ Live GPS CAD</h4>
+                    <p>
+                      Real-time recovery unit telemetry, multi-stop queue sequencing, night-shift
+                      overtime tracking, and partner outsourcing.
+                    </p>
+                  </div>
+                </div>
+                <div className="tracker-pillar-item" id="insurers">
+                  <div className="tracker-pillar-icon">03</div>
+                  <div>
+                    <h4>Multi-Policy Insurer Quota Engine</h4>
+                    <p>
+                      1:N customer-to-policy management across Allianz, Bankers, AXA, Medgulf,
+                      Fidelity, and LIA with sequential tier &amp; cooldown enforcement.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: Tracker Connect™ Command Portal Login Card */}
+            <div className="tracker-login-card-wrap">
+              <div className="tracker-login-card">
+                <div className="tracker-login-header">
+                  <div className="tracker-login-badge">
+                    SHA-512 SALTED HASH • HMAC-SHA256 SESSION
+                  </div>
+                  <h2>Sign In to Tracker Connect™</h2>
+                  <p>
+                    Passwords are verified in SQL Server using per-user cryptographic salts and{' '}
+                    <code>HASHBYTES(&#39;SHA2_512&#39;)</code> with zero plaintext storage.
+                  </p>
+                </div>
+
+                {loginError && <div className="tracker-login-error">{loginError}</div>}
+
+                <form onSubmit={handleLoginSubmit} className="tracker-login-form">
+                  <div className="tracker-field">
+                    <label>Operator Username / ID</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. assaad.khalife"
+                      value={loginForm.username}
+                      onChange={e => setLoginForm({ ...loginForm, username: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div className="tracker-field">
+                    <div className="tracker-field-label-row">
+                      <label>Password</label>
+                      <button
+                        type="button"
+                        className="tracker-link-btn"
+                        onClick={() => setShowPassword(prev => !prev)}
+                      >
+                        {showPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="Enter your portal password"
+                      value={loginForm.password}
+                      onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <button type="submit" className="tracker-btn-signin" disabled={loginLoading}>
+                    {loginLoading ? 'Authenticating with Command Server...' : 'Sign In to Command Portal →'}
+                  </button>
+                </form>
+
+                {/* Quick Operator Role Switcher for Instant Demo / Testing */}
+                <div className="tracker-quick-operators">
+                  <div className="tracker-quick-title">
+                    <span>Authorized Command Center Accounts (Click to Fill Credentials):</span>
+                  </div>
+                  <div className="tracker-operator-grid">
+                    {operatorProfiles.map(op => (
+                      <button
+                        key={op.username}
+                        type="button"
+                        className={
+                          loginForm.username === op.username
+                            ? 'tracker-op-chip active'
+                            : 'tracker-op-chip'
+                        }
+                        onClick={() => {
+                          setLoginForm({ username: op.username, password: op.password });
+                          setLoginError('');
+                        }}
+                      >
+                        <div className="tracker-op-name">{op.name}</div>
+                        <div className="tracker-op-role">{op.role}</div>
+                        <div className="tracker-op-creds">
+                          <code>{op.username}</code> • <span>{op.station}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
-      {/* erp Enterprise Top Navbar (.o_main_navbar) */}
+      {/* Enterprise Top Navbar */}
       <header className="o-main-navbar">
         <div className="o-navbar-left">
           <div className="o-app-brand">
-            <span>🚨</span>
-            <span>Towing &amp; Roadside CAD</span>
-            <span className="o-app-brand-badge">GIN401</span>
+            <span className="tracker-mini-emblem">T</span>
+            <span>TRACKER Connect™</span>
+            <span className="o-app-brand-badge">FleetLogic CAD</span>
           </div>
 
           <nav className="o-menu-sections">
@@ -832,69 +1145,73 @@ export default function App() {
               className={activeTab === 'map' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => setActiveTab('map')}
             >
-              🗺️ Live CAD Map
+              Live Fleet Map
             </button>
             <button
               className={activeTab === 'queue' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => setActiveTab('queue')}
             >
-              📋 Tow Requests
+              Dispatch Board
             </button>
             <button
               className={activeTab === 'intake' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => setActiveTab('intake')}
             >
-              📞 Call Intake
+              Call Desk
             </button>
             <button
               className={activeTab === 'policies' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => setActiveTab('policies')}
             >
-              🛡️ Insurance Policies
+              Customers &amp; Policies
             </button>
             <button
               className={activeTab === 'concurrency' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => setActiveTab('concurrency')}
             >
-              ⚡ Concurrency Lab
+              System Integrity
             </button>
             <button
               className={activeTab === 'performance' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => setActiveTab('performance')}
             >
-              🚀 Performance Lab
+              Dispatch Archive
             </button>
           </nav>
         </div>
 
         <div className="o-navbar-systray">
           <button className="btn-incoming-call" onClick={triggerIncomingCall}>
-            📞 Simulate Call
+            Incoming CTI Line
           </button>
           <div className="o-systray-pill">
-            <span>Rows:</span>
-            <strong>{kpis.totalTowRequests?.toLocaleString()}</strong>
+            <span>{currentUser.fullName}</span>
+            <strong>{currentUser.stationCode}</strong>
           </div>
-          <div className="o-systray-pill">
-            <span>SQL:</span>
-            <strong>{kpis.connectedSqlLogin}</strong>
-          </div>
+          <button
+            type="button"
+            className="btn-signout-nav"
+            onClick={handleLogout}
+            title="Sign out of Tracker Connect Portal"
+          >
+            Sign Out
+          </button>
         </div>
       </header>
 
-      {/* erp Control Panel & Breadcrumbs (shown on ERP views outside full-screen CAD Map) */}
+      {/* Control Panel & Breadcrumbs */}
       {activeTab !== 'map' && (
         <div className="o-control-panel">
           <div className="o-cp-left">
             <div className="o-breadcrumb-title">
-              <span>Roadside Assistance</span>
+              <span>Tracker Connect™</span>
               <span className="muted">/</span>
               <span>
-                {activeTab === 'intake' && 'Call Intake & Dispatch Request'}
-                {activeTab === 'policies' && 'Insurance Policies & Quota Tiers'}
-                {activeTab === 'queue' && 'Tow Requests & Driver Payroll'}
-                {activeTab === 'concurrency' && 'SQL Server Concurrency & Locking Lab'}
-                {activeTab === 'performance' && '120,000+ Rows Indexing & SQLi Lab'}
+                {activeTab === 'intake' && '24/7 Emergency Call Desk & Coverage Evaluation'}
+                {activeTab === 'policies' && 'Customer Directory & Multi-Policy Management'}
+                {activeTab === 'queue' && 'Dispatch Lifecycle Board & Driver Settlement'}
+                {activeTab === 'concurrency' && 'Transaction Integrity & Multi-Operator Protection'}
+                {activeTab === 'performance' && 'National Dispatch Archive & Security Audit'}
               </span>
             </div>
             {activeTab !== 'intake' && (
@@ -902,7 +1219,7 @@ export default function App() {
                 className="btn-erp-primary"
                 onClick={() => setActiveTab('intake')}
               >
-                ➕ New Tow Request
+                + New Dispatch Ticket
               </button>
             )}
           </div>
@@ -933,7 +1250,7 @@ export default function App() {
             <strong>{toast.title}</strong>
             <p>{toast.message}</p>
           </div>
-          <button onClick={() => setToast(null)}>✕</button>
+          <button onClick={() => setToast(null)}>×</button>
         </div>
       )}
 
@@ -941,7 +1258,7 @@ export default function App() {
       {incomingCallModal && (
         <div className="modal-backdrop">
           <div className="modal-box incoming-call-modal">
-            <div className="incoming-call-ring-badge">📲 INCOMING EMERGENCY CALL</div>
+            <div className="incoming-call-ring-badge">INCOMING EMERGENCY CALL</div>
             <h3>Incoming Caller Number</h3>
             <div className="form-row" style={{ marginTop: '8px' }}>
               <label>Caller Phone Number</label>
@@ -961,7 +1278,7 @@ export default function App() {
                 className="btn-primary"
                 onClick={() => acceptIncomingCall(incomingCallModal.phone)}
               >
-                📞 Answer Call
+                Answer Call
               </button>
               <button className="btn-secondary" onClick={() => setIncomingCallModal(null)}>
                 Decline
@@ -996,15 +1313,14 @@ export default function App() {
             <div className="modal-header-row">
               <h3>
                 {locationPicker.target === 'pickup'
-                  ? '📍 Pick Breakdown / Pickup Location'
-                  : '🏁 Pick Destination / Dropoff Location'}
+                  ? 'Pick Breakdown / Pickup Location'
+                  : 'Pick Destination / Dropoff Location'}
               </h3>
               <button
                 className="btn-close"
                 onClick={() => setLocationPicker(prev => ({ ...prev, open: false }))}
               >
-                ✕
-              </button>
+                </button>
             </div>
 
             {/* Floating Google Maps-style Search Bar with Autocomplete */}
@@ -1012,7 +1328,7 @@ export default function App() {
               <input
                 type="text"
                 className="map-search-input"
-                placeholder="🔍 Search place, street, or landmark in Lebanon (e.g. Jbeil, Hamra, Jounieh)..."
+                placeholder="Search place, street, or landmark in Lebanon (e.g. Jbeil, Hamra, Jounieh)..."
                 value={locationPicker.searchQuery}
                 onChange={e => handleLocationSearch(e.target.value)}
               />
@@ -1024,7 +1340,7 @@ export default function App() {
                       className="map-search-item"
                       onClick={() => selectAutocompleteLocation(item)}
                     >
-                      <span>📍 {item.name}</span>
+                      <span>{item.name}</span>
                       <small>
                         {item.lat}, {item.lng}
                       </small>
@@ -1050,7 +1366,7 @@ export default function App() {
               </div>
               <div className="modal-actions">
                 <button className="btn-primary" onClick={confirmPickedLocation}>
-                  ✅ Confirm Pin Location
+                  Confirm Pin Location
                 </button>
                 <button
                   className="btn-secondary"
@@ -1068,7 +1384,7 @@ export default function App() {
       {showPlateModal && (
         <div className="modal-backdrop">
           <div className="modal-box">
-            <h3>⚙️ Add New Lebanese Plate Letter</h3>
+            <h3>Add New Lebanese Plate Letter</h3>
             <p className="muted">
               Add new plate letters (e.g. <code>Y</code>, <code>R</code>, <code>C</code>) directly
               to <code>dbo.PlateCodes</code>.
@@ -1096,7 +1412,7 @@ export default function App() {
               </div>
               <div className="modal-actions">
                 <button type="submit" className="btn-primary">
-                  💾 Save Plate Letter
+                  Save Plate Letter
                 </button>
                 <button
                   type="button"
@@ -1118,7 +1434,7 @@ export default function App() {
           <div className="cad-map-stage">
             {/* Floating Top-Left Bar (Exact erp CAD Map Style) */}
             <div className="cad-floating-topbar">
-              <h2>🚨 Live Towing CAD</h2>
+              <h2>Live Towing CAD</h2>
               <span className="badge badge-Available">Available</span>
               <span className="badge badge-InProgress">En-Route</span>
               <span className="badge badge-PendingInsurance">Pending</span>
@@ -1126,7 +1442,7 @@ export default function App() {
                 className={trafficEnabled ? 'btn-traffic active' : 'btn-traffic'}
                 onClick={() => setTrafficEnabled(prev => !prev)}
               >
-                🚦 {trafficEnabled ? 'Live Traffic: ON' : 'Traffic'}
+                {trafficEnabled ? 'Live Traffic: ON' : 'Traffic'}
               </button>
               {(selectedMapTruckId || selectedMapJobId) && (
                 <button
@@ -1136,7 +1452,7 @@ export default function App() {
                     setSelectedMapJobId(null);
                   }}
                 >
-                  ✕ Clear Highlight
+                  × Clear Highlight
                 </button>
               )}
             </div>
@@ -1147,7 +1463,7 @@ export default function App() {
                 className="cad-floating-btn"
                 onClick={() => setDrawerOpen(true)}
               >
-                📊 Fleet &amp; Jobs ({dashboard?.trucks?.length || 0} / {ongoingJobs.length})
+                Fleet &amp; Jobs ({dashboard?.trucks?.length || 0} / {ongoingJobs.length})
               </button>
             )}
 
@@ -1202,27 +1518,26 @@ export default function App() {
             {drawerOpen && (
               <aside className="cad-slide-drawer">
                 <div className="drawer-header">
-                  <h3>📊 Fleet &amp; Ongoing Jobs</h3>
+                  <h3>Fleet &amp; Ongoing Jobs</h3>
                   <button
                     className="close-drawer-btn"
                     onClick={() => setDrawerOpen(false)}
                     title="Close Drawer"
                   >
-                    ✕
-                  </button>
+                    </button>
                 </div>
                 <div className="drawer-subtabs">
                   <button
                     className={drawerTab === 'trucks' ? 'subtab active' : 'subtab'}
                     onClick={() => setDrawerTab('trucks')}
                   >
-                    🚛 All Trucks ({dashboard?.trucks?.length || 0})
+                    All Trucks ({dashboard?.trucks?.length || 0})
                   </button>
                   <button
                     className={drawerTab === 'jobs' ? 'subtab active' : 'subtab'}
                     onClick={() => setDrawerTab('jobs')}
                   >
-                    🚨 Ongoing Jobs ({ongoingJobs.length})
+                    Ongoing Jobs ({ongoingJobs.length})
                   </button>
                 </div>
 
@@ -1252,7 +1567,7 @@ export default function App() {
                         >
                           <div className="truck-card-top">
                             <strong>
-                              🚛 {t.truckCode} ({t.licensePlate})
+                              {t.truckCode} ({t.licensePlate})
                             </strong>
                             <span className={`badge badge-${t.fleetStatus}`}>
                               {t.fleetStatus}
@@ -1282,7 +1597,7 @@ export default function App() {
                                   });
                                 }}
                               >
-                                🎯 Locate
+                                Locate
                               </button>
                               <button
                                 className="btn-xs"
@@ -1292,7 +1607,7 @@ export default function App() {
                                   )
                                 }
                               >
-                                📋 Stop Queue ({truckJobs.length})
+                                Stop Queue ({truckJobs.length})
                               </button>
                             </div>
 
@@ -1314,7 +1629,7 @@ export default function App() {
                                         </span>{' '}
                                         <strong>{job.requestNumber}</strong> ({job.vehiclePlate})
                                         <div className="muted">
-                                          📍 {job.pickupAddress} → 🏁 {job.destinationAddress}
+                                          {job.pickupAddress} → {job.destinationAddress}
                                         </div>
                                       </div>
                                       <div className="reorder-btns">
@@ -1384,8 +1699,8 @@ export default function App() {
                               <strong>{r.customerName}</strong> • <code>{r.vehiclePlate}</code> (
                               {r.issueType})
                             </div>
-                            <div>📍 {r.pickupAddress}</div>
-                            <div>🏁 {r.destinationAddress}</div>
+                            <div>{r.pickupAddress}</div>
+                            <div>{r.destinationAddress}</div>
                             <div>
                               Distance: <strong>{r.actualDistanceKm} km</strong> | Extra:{' '}
                               <strong
@@ -1396,7 +1711,7 @@ export default function App() {
                             </div>
                             {r.truckCode && (
                               <div className="text-amber">
-                                🚛 Assigned: <strong>{r.truckCode}</strong>
+                                Assigned: <strong>{r.truckCode}</strong>
                               </div>
                             )}
                           </div>
@@ -1421,14 +1736,14 @@ export default function App() {
                   className="btn-erp-secondary"
                   onClick={() => setShowPlateModal(true)}
                 >
-                  ⚙️ + Add Plate Letter
+                  + Add Plate Letter
                 </button>
                 <button
                   type="button"
                   className="btn-erp-secondary"
                   onClick={() => setShowTierEditor(prev => !prev)}
                 >
-                  📑 {showTierEditor ? 'Hide Quota Tier Editor' : 'Configure Policy Quota Tiers'}
+                  {showTierEditor ? 'Hide Quota Tier Editor' : 'Configure Policy Quota Tiers'}
                 </button>
               </div>
               <div className="o-statusbar-status">
@@ -1445,21 +1760,21 @@ export default function App() {
             {eligibility && (
               <div className="oe-button-box">
                 <div className="oe-stat-button">
-                  <span className="oe-stat-icon">🛣️</span>
+                  <span className="oe-stat-icon">KM</span>
                   <div className="oe-stat-info">
                     <span className="oe-stat-value">{eligibility.calculatedRoadKm} km</span>
                     <span className="oe-stat-text">Road Distance</span>
                   </div>
                 </div>
                 <div className="oe-stat-button">
-                  <span className="oe-stat-icon">🛡️</span>
+                  <span className="oe-stat-icon">MAX</span>
                   <div className="oe-stat-info">
                     <span className="oe-stat-value">{eligibility.allowedDistanceKm} km</span>
                     <span className="oe-stat-text">Covered KM</span>
                   </div>
                 </div>
                 <div className="oe-stat-button">
-                  <span className="oe-stat-icon">🎟️</span>
+                  <span className="oe-stat-icon">QTY</span>
                   <div className="oe-stat-info">
                     <span className="oe-stat-value">
                       {eligibility.remainingCategoryTows} left
@@ -1468,7 +1783,7 @@ export default function App() {
                   </div>
                 </div>
                 <div className="oe-stat-button">
-                  <span className="oe-stat-icon">⏱️</span>
+                  <span className="oe-stat-icon">DAYS</span>
                   <div className="oe-stat-info">
                     <span className="oe-stat-value">
                       {eligibility.requiredCooldownDays} days
@@ -1477,7 +1792,7 @@ export default function App() {
                   </div>
                 </div>
                 <div className="oe-stat-button">
-                  <span className="oe-stat-icon">💵</span>
+                  <span className="oe-stat-icon">USD</span>
                   <div className="oe-stat-info">
                     <span className="oe-stat-value">${eligibility.overageAmount}</span>
                     <span className="oe-stat-text">Extra Charge</span>
@@ -1490,7 +1805,7 @@ export default function App() {
               <div className="card">
                 <div className="card-header-flex">
                   <div>
-                    <h3>📞 Call Responder Intake &amp; Dispatch Ticket</h3>
+                    <h3>Call Responder Intake &amp; Dispatch Ticket</h3>
                     <p className="muted">
                       Executes <code>dbo.usp_CreateTowRequest</code> with parameterized{' '}
                       <code>SqlCommand</code> &amp; built-in Google Maps Pin Picker.
@@ -1501,7 +1816,7 @@ export default function App() {
                     className="btn-xs"
                     onClick={() => setShowPlateModal(true)}
                   >
-                    ⚙️ + Plate Letter
+                    + Plate Letter
                   </button>
                 </div>
 
@@ -1554,7 +1869,7 @@ export default function App() {
                           {p.policyStatus})
                         </option>
                       ))}
-                      <option value={0}>💵 No Insurance Policy / Direct Cash Call</option>
+                      <option value={0}>No Insurance Policy / Direct Cash Call</option>
                     </select>
                   </div>
                 </div>
@@ -1569,11 +1884,11 @@ export default function App() {
                         setTimeout(() => checkEligibility(true), 60);
                       }}
                     >
-                      <option value="Mechanical">🔧 Mechanical Breakdown</option>
-                      <option value="Accident">💥 Accident Tow</option>
-                      <option value="Winch">🏗️ Winch / Off-Road Recovery</option>
-                      <option value="FlatTire">🛞 Flat Tire</option>
-                      <option value="Battery">🔋 Battery Jump</option>
+                      <option value="Mechanical">Mechanical Breakdown</option>
+                      <option value="Accident">Accident Tow</option>
+                      <option value="Winch">Winch / Off-Road Recovery</option>
+                      <option value="FlatTire">Flat Tire</option>
+                      <option value="Battery">Battery Jump</option>
                     </select>
                   </div>
                   <div>
@@ -1664,14 +1979,14 @@ export default function App() {
                 <div className="form-row">
                   <div className="label-with-btn">
                     <label>
-                      📍 Pickup Address ({intakeForm.pickupLat}, {intakeForm.pickupLng})
+                      Pickup Address ({intakeForm.pickupLat}, {intakeForm.pickupLng})
                     </label>
                     <button
                       type="button"
                       className="btn-pin-picker"
                       onClick={() => openLocationPickerModal('pickup')}
                     >
-                      📍 Drop Pin / Search Map
+                      Drop Pin / Search Map
                     </button>
                   </div>
                   <input
@@ -1689,14 +2004,14 @@ export default function App() {
                 <div className="form-row">
                   <div className="label-with-btn">
                     <label>
-                      🏁 Dropoff Destination ({intakeForm.dropoffLat}, {intakeForm.dropoffLng})
+                      Dropoff Destination ({intakeForm.dropoffLat}, {intakeForm.dropoffLng})
                     </label>
                     <button
                       type="button"
                       className="btn-pin-picker"
                       onClick={() => openLocationPickerModal('dropoff')}
                     >
-                      🏁 Drop Pin / Search Map
+                      Drop Pin / Search Map
                     </button>
                   </div>
                   <input
@@ -1720,7 +2035,7 @@ export default function App() {
                         setIntakeForm({ ...intakeForm, isOutsourced: e.target.checked })
                       }
                     />
-                    <strong>🤝 Outsource to External Subcontractor Partner</strong>
+                    <strong>Outsource to External Subcontractor Partner</strong>
                   </label>
                   {intakeForm.isOutsourced && (
                     <div className="form-row-2" style={{ marginTop: '8px' }}>
@@ -1762,7 +2077,7 @@ export default function App() {
                 </div>
 
                 <button type="submit" className="btn-primary">
-                  ➕ Create Tow Request in SQL Server
+                  + Create Tow Request in SQL Server
                 </button>
               </form>
             </div>
@@ -1771,7 +2086,7 @@ export default function App() {
             <div className="card">
               <div className="card-header-flex">
                 <div>
-                  <h3>🛡️ Live Policy Quota &amp; Cooldown Evaluation</h3>
+                  <h3>Live Policy Quota &amp; Cooldown Evaluation</h3>
                   <p className="muted">
                     Evaluated by <code>dbo.tvf_CheckPolicyEligibility</code> &amp; OSRM /{' '}
                     <code>dbo.fn_CalculateRoadDistanceKm</code>
@@ -1782,7 +2097,7 @@ export default function App() {
                   className="btn-erp-primary"
                   onClick={() => setActiveTab('policies')}
                 >
-                  🛡️ Manage Insurance Policies
+                  Manage Insurance Policies
                 </button>
               </div>
 
@@ -1795,8 +2110,8 @@ export default function App() {
                   >
                     <h4>
                       {eligibility.isEligible
-                        ? '✅ POLICY ELIGIBLE FOR COVERAGE'
-                        : '⚠️ POLICY QUOTA / COOLDOWN BLOCKED'}
+                        ? 'POLICY ELIGIBLE FOR COVERAGE'
+                        : 'POLICY QUOTA / COOLDOWN BLOCKED'}
                     </h4>
                     <p>{eligibility.statusBanner}</p>
                   </div>
@@ -1850,14 +2165,14 @@ export default function App() {
               <div className="tiers-section">
                 <div className="card-header-flex" style={{ marginBottom: '8px' }}>
                   <h4>
-                    📑 Active Quota Tiers for <code>{selectedPolicyObj?.policyNumber}</code>
+                    Active Quota Tiers for <code>{selectedPolicyObj?.policyNumber}</code>
                   </h4>
                   <button
                     type="button"
                     className="btn-xs"
                     onClick={() => setActiveTab('policies')}
                   >
-                    ➕ New Policy / ✏️ Edit Quotas
+                    + New Policy / Edit Quotas
                   </button>
                 </div>
                 <table className="data-table">
@@ -1893,7 +2208,7 @@ export default function App() {
                         <td>{tier.maxDistanceKm} km</td>
                         <td>
                           <span className="badge badge-PendingInsurance">
-                            ⏱️ {tier.minIntervalDays} days
+                            {tier.minIntervalDays} days
                           </span>
                         </td>
                       </tr>
@@ -1914,7 +2229,7 @@ export default function App() {
               <div className="card">
                 <div className="card-header-flex">
                   <div>
-                    <h3>👤 1. Register New Customer (dbo.Customers)</h3>
+                    <h3>1. Register New Customer (dbo.Customers)</h3>
                     <p className="muted">
                       Customers are stored separately in <code>dbo.Customers</code> so one customer
                       can hold multiple policies in <code>dbo.InsurancePolicies</code> (1:N).
@@ -1962,7 +2277,7 @@ export default function App() {
                     </div>
                   </div>
                   <button type="submit" className="btn-erp-primary">
-                    ➕ Register Customer in dbo.Customers
+                    + Register Customer in dbo.Customers
                   </button>
                 </form>
               </div>
@@ -1970,7 +2285,7 @@ export default function App() {
               <div className="card">
                 <div className="card-header-flex">
                   <div>
-                    <h3>🛡️ 2. Attach New Insurance Policy to Customer</h3>
+                    <h3>2. Attach New Insurance Policy to Customer</h3>
                     <p className="muted">
                       Links a new policy in <code>dbo.InsurancePolicies</code> and sequential quota
                       tiers in <code>dbo.PolicyQuotaTiers</code> to the selected customer.
@@ -2075,7 +2390,7 @@ export default function App() {
                   </div>
 
                   <div className="tier-edit-box" style={{ marginTop: '4px' }}>
-                    <h5>⚙️ Initial Sequential Quota Tiers &amp; Cooldown Rules</h5>
+                    <h5>Initial Sequential Quota Tiers &amp; Cooldown Rules</h5>
                     <div className="form-row-2" style={{ marginTop: '8px' }}>
                       <div>
                         <label>Tier #1 — Mechanical Breakdown Allowed Tows</label>
@@ -2144,7 +2459,7 @@ export default function App() {
                   </div>
 
                   <button type="submit" className="btn-primary">
-                    ➕ Attach New Insurance Policy to {selectedCustomerObj?.fullName || 'Customer'}
+                    + Attach New Insurance Policy to {selectedCustomerObj?.fullName || 'Customer'}
                   </button>
                 </form>
               </div>
@@ -2154,7 +2469,7 @@ export default function App() {
             <div className="card">
               <div className="card-header-flex">
                 <div>
-                  <h3>📑 Customer Policies &amp; Sequential Quota Tier Editor</h3>
+                  <h3>Customer Policies &amp; Sequential Quota Tier Editor</h3>
                   <p className="muted">
                     Select a customer to view all of their insurance policies (1:N), then select any
                     policy to configure its <code>dbo.PolicyQuotaTiers</code> rules.
@@ -2165,7 +2480,7 @@ export default function App() {
                   className="btn-xs"
                   onClick={() => setShowTierEditor(prev => !prev)}
                 >
-                  ⚙️ {showTierEditor ? 'Hide Tier Editor' : 'Show Tier Editor'}
+                  {showTierEditor ? 'Hide Tier Editor' : 'Show Tier Editor'}
                 </button>
               </div>
 
@@ -2241,7 +2556,7 @@ export default function App() {
 
               <div className="tiers-section" style={{ marginTop: 0, borderTop: 'none', paddingTop: 0 }}>
                 <h4>
-                  📑 Sequential Quota Tiers for <code>{selectedPolicyObj?.policyNumber}</code>
+                  Sequential Quota Tiers for <code>{selectedPolicyObj?.policyNumber}</code>
                 </h4>
                 <p className="muted">
                   Configure allowed tows, max covered distance (km), and{' '}
@@ -2281,7 +2596,7 @@ export default function App() {
                         <td>{tier.maxDistanceKm} km</td>
                         <td>
                           <span className="badge badge-PendingInsurance">
-                            ⏱️ {tier.minIntervalDays} days
+                            {tier.minIntervalDays} days
                           </span>
                         </td>
                         <td>
@@ -2289,7 +2604,7 @@ export default function App() {
                             className="btn-xs"
                             onClick={() => setEditingTier({ ...tier })}
                           >
-                            ✏️ Edit
+                            Edit
                           </button>
                         </td>
                       </tr>
@@ -2301,7 +2616,7 @@ export default function App() {
                 {editingTier && (
                   <div className="tier-edit-box">
                     <h5>
-                      ✏️ Edit Tier #{editingTier.tierSequence} ({editingTier.coverageType})
+                      Edit Tier #{editingTier.tierSequence} ({editingTier.coverageType})
                     </h5>
                     <div className="form-row-3">
                       <div>
@@ -2349,7 +2664,7 @@ export default function App() {
                         className="btn-primary"
                         onClick={() => handleUpdateTier(editingTier)}
                       >
-                        💾 Save Tier Rule
+                        Save Tier Rule
                       </button>
                       <button className="btn-secondary" onClick={() => setEditingTier(null)}>
                         Cancel
@@ -2361,7 +2676,7 @@ export default function App() {
                 {/* Add New Sequential Tier Form */}
                 {!editingTier && (
                   <form onSubmit={handleAddTier} className="tier-edit-box">
-                    <h5>➕ Add New Sequential Quota Tier to {selectedPolicyObj?.policyNumber}</h5>
+                    <h5>+ Add New Sequential Quota Tier to {selectedPolicyObj?.policyNumber}</h5>
                     <div className="form-row-3">
                       <div>
                         <label>Sequence #</label>
@@ -2408,7 +2723,7 @@ export default function App() {
                       </div>
                     </div>
                     <button type="submit" className="btn-xs" style={{ marginTop: '8px' }}>
-                      ➕ Add Sequential Tier
+                      + Add Sequential Tier
                     </button>
                   </form>
                 )}
@@ -2422,12 +2737,12 @@ export default function App() {
           <div className="card">
             <div className="queue-header">
               <div>
-                <h3>📋 Dispatch Lifecycle Board &amp; Immutability Trigger Enforcement</h3>
+                <h3>Dispatch Lifecycle Board &amp; Immutability Trigger Enforcement</h3>
                 <p className="muted">
                   Logical left-to-right flow: <code>Draft</code> →{' '}
                   <code>PendingInsurance</code> → <code>Approved</code> →{' '}
                   <code>InProgress</code> → <code>UnableToLoad</code> / <code>Done</code> /{' '}
-                  <code>Rejected</code>. Finalized states are locked by SQL trigger{' '}
+                  <code>× Rejected</code>. Finalized states are locked by SQL trigger{' '}
                   <code>dbo.trg_TowRequests_ImmutabilityAndAudit</code>.
                 </p>
               </div>
@@ -2436,22 +2751,22 @@ export default function App() {
                   className={queueViewMode === 'kanban' ? 'btn-xs active-view' : 'btn-xs'}
                   onClick={() => setQueueViewMode('kanban')}
                 >
-                  🗂️ Kanban View
+                  Kanban View
                 </button>
                 <button
                   className={queueViewMode === 'table' ? 'btn-xs active-view' : 'btn-xs'}
                   onClick={() => setQueueViewMode('table')}
                 >
-                  📄 Table View
+                  Table View
                 </button>
                 <button
                   className={queueViewMode === 'payroll' ? 'btn-xs active-view' : 'btn-xs'}
                   onClick={() => setQueueViewMode('payroll')}
                 >
-                  💰 Driver Payroll &amp; Overtime (7PM–7AM)
+                  Driver Payroll &amp; Overtime (7PM–7AM)
                 </button>
                 <button className="btn-secondary" onClick={fetchDashboard}>
-                  🔄 Refresh
+                  Refresh
                 </button>
               </div>
             </div>
@@ -2483,8 +2798,8 @@ export default function App() {
                               <div>
                                 <strong>{r.customerName}</strong> ({r.issueType})
                               </div>
-                              <div className="muted">📍 {r.pickupAddress}</div>
-                              <div className="muted">🏁 {r.destinationAddress}</div>
+                              <div className="muted">{r.pickupAddress}</div>
+                              <div className="muted">{r.destinationAddress}</div>
                               <div>
                                 Dist: <strong>{r.actualDistanceKm} km</strong> | Extra:{' '}
                                 <strong
@@ -2494,7 +2809,7 @@ export default function App() {
                                 </strong>
                               </div>
                               {r.truckCode && (
-                                <div className="text-amber">🚛 {r.truckCode}</div>
+                                <div className="text-amber">{r.truckCode}</div>
                               )}
                             </div>
 
@@ -2523,7 +2838,7 @@ export default function App() {
                                       className="btn-xs btn-approve"
                                       onClick={() => handleDispatchTruck(r.towRequestId)}
                                     >
-                                      🚛 Approve &amp; Dispatch
+                                      Approve &amp; Dispatch
                                     </button>
                                     {r.status === 'Draft' && (
                                       <button
@@ -2535,16 +2850,16 @@ export default function App() {
                                           )
                                         }
                                       >
-                                        ⏳ Pending Ins.
+                                        Pending Ins.
                                       </button>
                                     )}
                                     <button
                                       className="btn-xs btn-reject"
                                       onClick={() =>
-                                        handleLifecycleChange(r.towRequestId, 'Rejected')
+                                        handleLifecycleChange(r.towRequestId, '× Rejected')
                                       }
                                     >
-                                      ✕ Reject
+                                      × Reject
                                     </button>
                                   </div>
                                 </>
@@ -2557,7 +2872,7 @@ export default function App() {
                                     handleLifecycleChange(r.towRequestId, 'InProgress')
                                   }
                                 >
-                                  ▶️ Start En-Route (InProgress)
+                                  ▶Start En-Route (InProgress)
                                 </button>
                               )}
 
@@ -2569,7 +2884,7 @@ export default function App() {
                                       handleLifecycleChange(r.towRequestId, 'Done')
                                     }
                                   >
-                                    ✅ Mark Done
+                                    Mark Done
                                   </button>
                                   <button
                                     className="btn-xs btn-warn"
@@ -2577,20 +2892,20 @@ export default function App() {
                                       handleLifecycleChange(r.towRequestId, 'UnableToLoad')
                                     }
                                   >
-                                    ⚠️ UnableToLoad
+                                    UnableToLoad
                                   </button>
                                 </div>
                               )}
 
                               {(r.status === 'Done' ||
                                 r.status === 'UnableToLoad' ||
-                                r.status === 'Rejected') && (
+                                r.status === '× Rejected') && (
                                 <button
                                   className="btn-xs btn-locked"
                                   title="Test SQL Server Immutability Trigger"
                                   onClick={() => handleTestTriggerLock(r.towRequestId)}
                                 >
-                                  🔒 Locked (Test Trigger)
+                                  Locked (Test Trigger)
                                 </button>
                               )}
                             </div>
@@ -2636,8 +2951,8 @@ export default function App() {
                         </td>
                         <td>{r.issueType}</td>
                         <td>
-                          📍 {r.pickupAddress}
-                          <br />🏁 {r.destinationAddress}
+                          {r.pickupAddress}
+                          <br />{r.destinationAddress}
                         </td>
                         <td>
                           <strong>{r.actualDistanceKm} km</strong>
@@ -2659,12 +2974,12 @@ export default function App() {
                         <td>
                           {(r.status === 'Done' ||
                             r.status === 'UnableToLoad' ||
-                            r.status === 'Rejected') && (
+                            r.status === '× Rejected') && (
                             <button
                               className="btn-xs btn-locked"
                               onClick={() => handleTestTriggerLock(r.towRequestId)}
                             >
-                              🔒 Test Trigger Lock
+                              Test Trigger Lock
                             </button>
                           )}
                         </td>
@@ -2679,7 +2994,7 @@ export default function App() {
             {queueViewMode === 'payroll' && (
               <div>
                 <h4>
-                  💰 Driver Payroll, Night-Shift Overtime (19:00–07:00 / Off-Day) &amp; Cash
+                  Driver Payroll, Night-Shift Overtime (19:00–07:00 / Off-Day) &amp; Cash
                   Collection Report (<code>dbo.vw_DriverPayrollAndCashReport</code>)
                 </h4>
                 <table className="data-table">
@@ -2731,17 +3046,16 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: CONCURRENCY & LOCKING LAB */}
+        {/* TAB 4: TRANSACTION INTEGRITY & MULTI-OPERATOR PROTECTION */}
         {activeTab === 'concurrency' && (
           <div className="two-col-grid">
             <div className="card">
-              <h3>⚡ Test 1: Pessimistic Concurrency Race (Two Dispatchers At Once)</h3>
+              <h3>Multi-Operator Dispatch Serialization (Pessimistic Quota Lock)</h3>
               <p className="muted">
-                Fires <strong>two simultaneous C# parallel threads</strong> calling{' '}
-                <code>dbo.usp_ApproveAndDispatchTow</code> on a policy with{' '}
-                <strong>only 1 remaining Accident tow</strong>. Inside SQL Server,{' '}
-                <code>WITH (UPDLOCK, ROWLOCK)</code> serializes the second transaction so
-                exactly 1 succeeds and the 2nd rolls back cleanly!
+                Protects customer policy quotas when two dispatchers assign the final remaining tow
+                simultaneously. SQL Server <code>WITH (UPDLOCK, ROWLOCK)</code> inside{' '}
+                <code>dbo.usp_ApproveAndDispatchTow</code> serializes concurrent approvals so
+                quotas can never be over-allocated.
               </p>
 
               <button
@@ -2751,8 +3065,8 @@ export default function App() {
                 disabled={concurrencyRunning}
               >
                 {concurrencyRunning
-                  ? 'Racing 2 Dispatchers...'
-                  : '🏁 Fire 2 Concurrent Dispatch Threads (Task.WhenAll)'}
+                  ? 'Verifying Concurrent Dispatch Locks...'
+                  : 'Verify Multi-Operator Quota Protection (2 Simultaneous Approvals)'}
               </button>
 
               {concurrencyResult && (
@@ -2782,11 +3096,11 @@ export default function App() {
             </div>
 
             <div className="card">
-              <h3>🛡️ Test 2: Optimistic Concurrency Control (ROWVERSION Token)</h3>
+              <h3>Optimistic Ticket Version Control (ROWVERSION Token)</h3>
               <p className="muted">
-                Every row in <code>dbo.TowRequests</code> has a binary{' '}
-                <code>RowVer ROWVERSION</code>. Passing a stale token triggers an{' '}
-                <code>Optimistic Concurrency Conflict</code>.
+                Every dispatch record in <code>dbo.TowRequests</code> carries a hardware-incremented{' '}
+                <code>RowVer ROWVERSION</code> token to prevent a dispatcher from overwriting a
+                colleague&apos;s changes with stale form data.
               </p>
 
               {dashboard?.recentRequests
@@ -2819,13 +3133,13 @@ export default function App() {
                         className="btn-primary"
                         onClick={() => handleOptimisticUpdate(req, false)}
                       >
-                        ✅ Save with Matching ROWVERSION
+                        Save with Matching ROWVERSION
                       </button>
                       <button
                         className="btn-danger"
                         onClick={() => handleOptimisticUpdate(req, true)}
                       >
-                        💥 Simulate Stale ROWVERSION Conflict (0x0000000000000001)
+                        Simulate Stale ROWVERSION Conflict (0x0000000000000001)
                       </button>
                     </div>
                   </div>
@@ -2846,16 +3160,18 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 5: >120K ROWS PERFORMANCE & SECURITY LAB */}
+        {/* TAB 5: NATIONAL DISPATCH ARCHIVE & SECURITY AUDIT */}
         {activeTab === 'performance' && (
           <div className="card">
             <h3>
-              🚀 High-Volume Performance (&gt;120,000 Rows) &amp; SQL Injection Resistance Lab
+              National Dispatch Archive ({kpis.totalTowRequests?.toLocaleString()} Records) &amp;
+              Security Diagnostics
             </h3>
             <p className="muted">
-              Queries <strong>{kpis.totalTowRequests?.toLocaleString()} rows</strong> in{' '}
-              <code>dbo.TowRequests</code> using covering nonclustered indexes (Index Seek, 0 Key
-              Lookups, 0 Sort).
+              Instantaneous search across{' '}
+              <strong>{kpis.totalTowRequests?.toLocaleString()} historical roadside dispatches</strong>{' '}
+              in <code>dbo.TowRequests</code> powered by covering nonclustered indexes and
+              100% parameterized ADO.NET queries.
             </p>
 
             <div className="perf-filter-bar">
@@ -2874,7 +3190,7 @@ export default function App() {
                   <option value="InProgress">InProgress</option>
                   <option value="Approved">Approved</option>
                   <option value="UnableToLoad">UnableToLoad</option>
-                  <option value="Rejected">Rejected</option>
+                  <option value="× Rejected">× Rejected</option>
                 </select>
               </div>
               <div>
@@ -2908,7 +3224,7 @@ export default function App() {
                   onClick={() => runPerformanceQuery()}
                   disabled={perfLoading}
                 >
-                  🔍 Run Covering Index Seek
+                  Run Covering Index Seek
                 </button>
                 <button
                   className="btn-danger"
@@ -2919,7 +3235,7 @@ export default function App() {
                     runPerformanceQuery('plate', sqli);
                   }}
                 >
-                  🛡️ Test SQLi: &#39; OR 1=1 --
+                  Test SQLi: &#39; OR 1=1 --
                 </button>
               </div>
             </div>

@@ -827,6 +827,76 @@ app.MapPost("/api/policies/{policyId:int}/tiers", async (int policyId, UpdateQuo
     }
 });
 
+app.MapPost("/api/auth/login", async (LoginRequestDto dto) =>
+{
+    try
+    {
+        await using var conn = await OpenLeastPrivilegeConnectionAsync();
+        const string sql = @"
+            UPDATE dbo.SystemUsers
+            SET LastLoginAt = SYSUTCDATETIME()
+            OUTPUT
+                inserted.UserId,
+                inserted.Username,
+                inserted.FullName,
+                inserted.RoleTitle,
+                inserted.Department,
+                inserted.StationCode,
+                CONVERT(VARCHAR(34), inserted.PasswordHash, 1) AS HashPrefixHex
+            WHERE LOWER(LTRIM(RTRIM(Username))) = LOWER(LTRIM(RTRIM(@Username)))
+              AND PasswordHash = HASHBYTES('SHA2_512', CAST(CONCAT(PasswordSalt, ':', @Password) AS VARCHAR(200)))
+              AND IsActive = 1;";
+
+        await using var cmd = new SqlCommand(sql, conn);
+        cmd.Parameters.Add("@Username", SqlDbType.VarChar, 60).Value = dto.Username ?? "";
+        cmd.Parameters.Add("@Password", SqlDbType.VarChar, 128).Value = dto.Password ?? "";
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            int uid = reader.GetInt32(0);
+            string uname = reader.GetString(1);
+            string fullName = reader.GetString(2);
+            string roleTitle = reader.GetString(3);
+            string dept = reader.GetString(4);
+            string station = reader.GetString(5);
+            string hashPrefix = reader.GetString(6);
+
+            // Generate cryptographic HMAC-SHA256 signed session token
+            string payload = $"{uid}:{uname}:{station}:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+            byte[] secretKey = System.Text.Encoding.UTF8.GetBytes(
+                Environment.GetEnvironmentVariable("TRACKER_TOKEN_SECRET") ?? "TrackerConnect-HMAC-SHA256-Enterprise-Key-2026"
+            );
+            using var hmac = new System.Security.Cryptography.HMACSHA256(secretKey);
+            string signatureHex = Convert.ToHexString(hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(payload)));
+
+            return Results.Ok(new
+            {
+                success = true,
+                user = new
+                {
+                    userId = uid,
+                    username = uname,
+                    fullName,
+                    roleTitle,
+                    department = dept,
+                    stationCode = station,
+                    encryptionAlgorithm = "SHA2_512 + Per-User Salt + HMAC-SHA256 Session Token",
+                    hashFingerprint = hashPrefix + "...",
+                    sessionToken = $"TRK.{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(payload))}.{signatureHex[..24]}",
+                    loginTime = DateTime.Now.ToString("HH:mm:ss")
+                }
+            });
+        }
+
+        return Results.Unauthorized();
+    }
+    catch (SqlException ex)
+    {
+        return Results.BadRequest(new { success = false, error = ex.Message });
+    }
+});
+
 app.MapPost("/api/customers", async (CreateCustomerDto dto) =>
 {
     try
@@ -1326,6 +1396,7 @@ public record OptimisticEditDto(string IssueType, string IssueNotes, string Expe
 public record ReorderQueueDto(int TowRequestId, string Direction);
 public record CreatePlateCodeDto(string Code, string RegionDescription, int DisplaySequence);
 public record UpdateQuotaTierDto(int TierSequence, string CoverageType, int AllowedTows, int UsedTows, decimal MaxDistanceKm, int MinIntervalDays);
+public record LoginRequestDto(string Username, string Password);
 public record CreateCustomerDto(string FullName, string Phone, string? Email);
 public record CreatePolicyDto(
     int? CustomerId,

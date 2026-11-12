@@ -55,6 +55,7 @@ GRANT SELECT, INSERT, UPDATE ON dbo.PolicyQuotaTiers TO [db_tow_dispatcher_role]
 GRANT SELECT, UPDATE ON dbo.TowTrucks TO [db_tow_dispatcher_role];
 GRANT SELECT, INSERT, UPDATE ON dbo.TowRequests TO [db_tow_dispatcher_role];
 GRANT SELECT, INSERT ON dbo.TowAuditLogs TO [db_tow_dispatcher_role];
+GRANT SELECT, UPDATE ON dbo.SystemUsers TO [db_tow_dispatcher_role];
 GRANT SELECT ON dbo.vw_FleetPriorityQueueAndRankings TO [db_tow_dispatcher_role];
 GRANT SELECT ON dbo.vw_DriverPayrollAndCashReport TO [db_tow_dispatcher_role];
 

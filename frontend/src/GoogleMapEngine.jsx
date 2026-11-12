@@ -335,7 +335,7 @@ export function GoogleCadMap({
                   setActivePopup({
                     lat: r.pickupLat,
                     lng: r.pickupLng,
-                    title: `🚨 ${r.requestNumber} (Pickup)`,
+                    title: `${r.requestNumber} — Pickup`,
                     lines: [
                       `Customer: ${r.customerName} (${r.vehiclePlate})`,
                       `Vehicle: ${r.vehicleModel} • ${r.issueType}`,
@@ -343,8 +343,8 @@ export function GoogleCadMap({
                       `Dropoff: ${r.destinationAddress}`,
                       `Distance: ${r.actualDistanceKm} km (Covered: ${r.allowedDistanceKm} km)`,
                       r.overageAmount > 0
-                        ? `⚠️ Overage: +${r.overageKm} km ($${r.overageAmount})`
-                        : '✅ Within Policy KM Limit',
+                        ? `Overage: +${r.overageKm} km ($${r.overageAmount})`
+                        : 'Status: Within Policy KM Limit',
                       r.truckCode
                         ? `Assigned: ${r.truckCode} ${stopNum ? `(Stop #${stopNum})` : ''}`
                         : 'Assigned: Unassigned'
@@ -352,7 +352,7 @@ export function GoogleCadMap({
                   });
                 }}
               >
-                {stopNum ? `${stopNum}P` : '📍'}
+                {stopNum ? `${stopNum}P` : 'P'}
               </div>
 
               {/* Dropoff Circular Marker */}
@@ -365,19 +365,19 @@ export function GoogleCadMap({
                   background: stopNum ? '#1e293b' : '#10B981',
                   width: '28px',
                   height: '28px',
-                  fontSize: '12px'
+                  fontSize: '11px'
                 }}
                 onClick={e => {
                   e.stopPropagation();
                   setActivePopup({
                     lat: r.destinationLat,
                     lng: r.destinationLng,
-                    title: `🏁 Destination (${r.requestNumber})`,
+                    title: `Destination (${r.requestNumber})`,
                     lines: [r.destinationAddress, `Total Distance: ${r.actualDistanceKm} km`]
                   });
                 }}
               >
-                {stopNum ? `${stopNum}D` : '🏁'}
+                {stopNum ? `${stopNum}D` : 'D'}
               </div>
             </React.Fragment>
           );
@@ -398,12 +398,13 @@ export function GoogleCadMap({
               : t.fleetStatus === 'OnJob' || t.fleetStatus === 'Busy'
               ? '#F59E0B'
               : '#64748b';
+          const shortCode = t.truckCode.replace('TRK-', 'T');
 
           return (
             <div
               key={`truck-${t.truckId}`}
               className="gmap-circle-truck"
-              title={`🚛 ${t.truckCode} (${t.driverName} - ${t.fleetStatus})`}
+              title={`${t.truckCode} (${t.driverName} - ${t.fleetStatus})`}
               style={{
                 left: `${pos.x}px`,
                 top: `${pos.y}px`,
@@ -417,7 +418,7 @@ export function GoogleCadMap({
                 setActivePopup({
                   lat: t.currentLat,
                   lng: t.currentLng,
-                  title: `🚛 ${t.truckCode} (${t.licensePlate})`,
+                  title: `${t.truckCode} (${t.licensePlate})`,
                   lines: [
                     `Driver: ${t.driverName} (${t.driverPhone})`,
                     `Status: ${t.fleetStatus} | Speed: ${t.speedKmh} km/h`,
@@ -427,7 +428,9 @@ export function GoogleCadMap({
                 });
               }}
             >
-              <span>🚛</span>
+              <span style={{ fontSize: '10.5px', fontWeight: 800, color: '#ffffff', letterSpacing: '-0.02em' }}>
+                {shortCode}
+              </span>
               {truckActiveJobs.length > 0 && (
                 <span className="gmap-truck-count-badge">{truckActiveJobs.length}</span>
               )}
@@ -474,19 +477,19 @@ export function GoogleCadMap({
           className={baseLayer === 'road' ? 'active' : ''}
           onClick={() => setBaseLayer('road')}
         >
-          🗺️ Road
+          Road
         </button>
         <button
           className={baseLayer === 'traffic' ? 'active' : ''}
           onClick={() => setBaseLayer('traffic')}
         >
-          🚦 Traffic
+          Traffic
         </button>
         <button
           className={baseLayer === 'hybrid' ? 'active' : ''}
           onClick={() => setBaseLayer('hybrid')}
         >
-          🛰️ Satellite
+          Satellite
         </button>
       </div>
 
@@ -653,7 +656,7 @@ export function GoogleLocationPickerMap({
           }}
           title="Drag pin or click anywhere on the map"
         >
-          📍
+          ●
         </div>
       </div>
 
@@ -666,7 +669,7 @@ export function GoogleLocationPickerMap({
         </button>
       </div>
       <div className="gmap-attribution">
-        Click anywhere or drag 📍 pin • Google Maps
+        Click anywhere or drag pin • Google Maps
       </div>
     </div>
   );

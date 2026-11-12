@@ -1443,3 +1443,485 @@ input:focus, select:focus {
     width: 100vw;
   }
 }
+
+/* ============================================================================
+   9. TRACKER CONNECT™ WELCOME & ENCRYPTED LOGIN PORTAL (tracker.co.za Inspired)
+============================================================================ */
+.tracker-welcome-page {
+  min-height: 100vh;
+  background: radial-gradient(circle at 18% 20%, #162447 0%, #0b132b 58%, #070b19 100%);
+  color: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-sans);
+}
+
+.tracker-top-ribbon {
+  background: #060a17;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 7px 24px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+}
+
+.tracker-ribbon-inner {
+  max-width: 1340px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tracker-ribbon-left,
+.tracker-ribbon-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.tracker-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff5a1f;
+  box-shadow: 0 0 0 4px rgba(255, 90, 31, 0.25);
+  display: inline-block;
+}
+
+.tracker-ribbon-sep {
+  opacity: 0.35;
+}
+
+.tracker-public-nav {
+  background: rgba(11, 19, 43, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 14px 24px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.tracker-nav-inner {
+  max-width: 1340px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.tracker-brand-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tracker-emblem {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #ff5a1f 0%, #e03e00 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 21px;
+  color: #ffffff;
+  box-shadow: 0 6px 18px rgba(255, 90, 31, 0.38);
+}
+
+.tracker-brand-title {
+  font-size: 19px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  color: #ffffff;
+}
+
+.tracker-brand-title span {
+  color: #ff5a1f;
+}
+
+.tracker-brand-sub {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.tracker-public-links {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.tracker-public-links a {
+  color: #e2e8f0;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  transition: color 0.15s;
+}
+
+.tracker-public-links a:hover {
+  color: #ff5a1f;
+}
+
+.tracker-hotline-pill {
+  background: rgba(255, 90, 31, 0.14);
+  border: 1px solid rgba(255, 90, 31, 0.45);
+  padding: 6px 14px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #ffd8c9;
+}
+
+.tracker-hotline-pill strong {
+  color: #ff5a1f;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.tracker-hero-section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 36px 24px 52px;
+}
+
+.tracker-hero-inner {
+  max-width: 1340px;
+  margin: 0 auto;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1.25fr 0.95fr;
+  gap: 44px;
+  align-items: center;
+}
+
+.tracker-eyebrow-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 168, 232, 0.14);
+  border: 1px solid rgba(0, 168, 232, 0.4);
+  color: #7dd3fc;
+  padding: 5px 13px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  margin-bottom: 16px;
+}
+
+.tracker-hero-copy h1 {
+  font-size: 38px;
+  line-height: 1.15;
+  font-weight: 900;
+  color: #ffffff;
+  margin-bottom: 14px;
+  letter-spacing: -0.02em;
+}
+
+.tracker-accent-text {
+  background: linear-gradient(90deg, #ff5a1f 0%, #ff9e44 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.tracker-hero-lead {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #cbd5e1;
+  margin-bottom: 24px;
+  max-width: 640px;
+}
+
+.tracker-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 26px;
+}
+
+.tracker-stat-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 10px;
+  padding: 13px 14px;
+}
+
+.tracker-stat-num {
+  font-size: 21px;
+  font-weight: 900;
+  color: #ff5a1f;
+  margin-bottom: 2px;
+}
+
+.tracker-stat-label {
+  font-size: 11px;
+  color: #cbd5e1;
+  line-height: 1.3;
+}
+
+.tracker-pillars {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tracker-pillar-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 13px 16px;
+  border-radius: 10px;
+}
+
+.tracker-pillar-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: rgba(255, 90, 31, 0.15);
+  border: 1px solid rgba(255, 90, 31, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: #ff5a1f;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.tracker-pillar-item h4 {
+  font-size: 14px;
+  font-weight: 800;
+  color: #ffffff;
+  margin-bottom: 3px;
+}
+
+.tracker-pillar-item p {
+  font-size: 12.5px;
+  color: #94a3b8;
+  line-height: 1.45;
+}
+
+/* Right Side Login Card */
+.tracker-login-card {
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 16px;
+  padding: 28px 28px 24px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.tracker-login-badge {
+  display: inline-block;
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fdba74;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: 999px;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+.tracker-login-header h2 {
+  font-size: 22px;
+  font-weight: 900;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+
+.tracker-login-header p {
+  font-size: 12.5px;
+  color: #475569;
+  margin-bottom: 18px;
+  line-height: 1.45;
+}
+
+.tracker-login-error {
+  background: #fef2f2;
+  border: 1px solid #f87171;
+  color: #991b1b;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.tracker-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tracker-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 5px;
+}
+
+.tracker-field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.tracker-field-label-row label {
+  margin-bottom: 0;
+}
+
+.tracker-link-btn {
+  background: none;
+  border: none;
+  color: #ea580c;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tracker-field input {
+  width: 100%;
+  padding: 10px 13px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13.5px;
+  color: #0f172a;
+  background: #f8fafc;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.tracker-field input:focus {
+  outline: none;
+  border-color: #ff5a1f;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(255, 90, 31, 0.15);
+}
+
+.tracker-btn-signin {
+  margin-top: 4px;
+  width: 100%;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ff5a1f 0%, #d93800 100%);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(255, 90, 31, 0.3);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+
+.tracker-btn-signin:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(255, 90, 31, 0.4);
+}
+
+.tracker-quick-operators {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.tracker-quick-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.tracker-operator-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.tracker-op-chip {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  cursor: pointer;
+  transition: all 0.14s;
+}
+
+.tracker-op-chip:hover,
+.tracker-op-chip.active {
+  border-color: #ff5a1f;
+  background: #fff7ed;
+}
+
+.tracker-op-name {
+  font-size: 12px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.tracker-op-role {
+  font-size: 10.5px;
+  color: #475569;
+  margin: 1px 0 3px;
+}
+
+.tracker-op-creds {
+  font-size: 10px;
+  color: #ea580c;
+  font-weight: 700;
+}
+
+.tracker-mini-emblem {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: #ff5a1f;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 12px;
+}
+
+.btn-signout-nav {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-signout-nav:hover {
+  background: #ef4444;
+  border-color: #ef4444;
+}
+
+@media (max-width: 1024px) {
+  .tracker-hero-inner {
+    grid-template-columns: 1fr;
+  }
+  .tracker-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
