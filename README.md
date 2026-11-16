@@ -1,25 +1,27 @@
 # GIN401 Lab Project — Roadside Assistance, Insurance Quota & Towing CAD System
 
-An end-to-end database application built for **GIN401** using **Microsoft SQL Server**, **C# (.NET 9 / ADO.NET)**, and **React.js**.
+An end-to-end 3-tier relational database application built for **GIN401** using **Microsoft SQL Server**, **C# (.NET 9 / Pure ADO.NET)**, and **React.js + Google Maps / OSRM**.
 
 ---
 
-## 1. Architecture & Grading Criteria Coverage
+## 1. Architecture & Requirements Coverage
 
-| GIN401 Criterion | Implementation in This Project |
+| Requirement Area | Implementation in This Project |
 | :--- | :--- |
-| **1. Database Design (10 pts)** | **8 normalized tables** (`InsuranceProviders`, `PlateCodes`, `Customers`, `InsurancePolicies`, `PolicyQuotaTiers`, `TowTrucks`, `TowRequests`, `TowAuditLogs`) with `PRIMARY KEY`, `FOREIGN KEY`, `UNIQUE`, `NOT NULL`, `CHECK` constraints, `ROWVERSION`, and **120,007 rows** in `dbo.TowRequests`. |
-| **2. T-SQL Logic (10 pts)** | Scalar function (`dbo.fn_CalculateRoadDistanceKm`), Table-Valued function (`dbo.tvf_CheckPolicyEligibility`), Trigger (`dbo.trg_TowRequests_ImmutabilityAndAudit`), Window Function View (`dbo.vw_FleetPriorityQueueAndRankings` using `ROW_NUMBER()`, `SUM() OVER()`, `COUNT() OVER()`), and 4 Stored Procedures (`usp_CreateTowRequest`, `usp_ApproveAndDispatchTow`, `usp_UpdateTowLifecycleStatus`, `usp_UpdateDraftTowOptimistic`). |
-| **3. Transactions & Concurrency (10 pts)** | Multi-step changes wrapped in `BEGIN TRAN` + `TRY…CATCH` + `ROLLBACK`. Handles two simultaneous dispatchers using **Pessimistic Locking** (`WITH (UPDLOCK, ROWLOCK)` on policy quota tiers) and **Optimistic Concurrency** (`ROWVERSION` binary token comparison). |
-| **4. Performance (10 pts)** | 4 nonclustered covering indexes (`INCLUDE` columns + matching `ORDER BY` key order) on the 120,007-row `dbo.TowRequests` table achieving **Index Seek, 0 Key Lookups, 0 Sort operators, and only 3 logical page reads (< 5 ms)**. |
-| **5. Security (10 pts)** | 100% parameterized queries (`SqlCommand.Parameters`), dedicated least-privilege login (`tow_cad_app_login` / `db_tow_dispatcher_role` with `DENY DELETE` and `IsSysAdmin = 0`), and connection string loaded from `.env` (gitignored, zero passwords in source code). |
-| **6. Application (20 pts)** | Standalone C# ADO.NET Web API + React.js CAD interface with interactive Lebanon Google Maps map, live policy quota/cooldown validator, dispatch board, 2-user race condition simulator, and >120k-row performance & SQL injection lab. |
+| **1. 3NF Normalization (19 Tables)** | Decomposes roadside operations into 19 normalized tables (`UserGroups`, `SystemUsers`, `InsuranceProviders`, `PlateCodes`, `Customers`, `Vehicles`, `InsurancePolicies`, `PolicyQuotaTiers`, `Drivers`, `TowTrucks`, `DriverTruckAssignments`, `Subcontractors`, `Tariffs`, `TowRequests`, `TowInvoices`, `InvoicePayments`, `TowAuditLogs`, `AuditChangeEvents`, `AuditChangeDetails`) seeded with **120,000+ `TowRequests`**, **120,000+ `TowInvoices`**, and **148,000+ `InvoicePayments`**. |
+| **2. Configuration Hub (`Users`, `User Groups`, `Tow Trucks`, `Drivers`)** | Unified **Configuration** module with master-detail sheets (`List -> Click Row -> Related 3NF Info`), separating `dbo.UserGroups` (permissions) from `dbo.SystemUsers` (`GroupId` FK) and separating `dbo.Drivers` from `dbo.TowTrucks` (operational shifts managed on the Dispatch Board via `dbo.DriverTruckAssignments`). |
+| **3. Historical Tariffs & Invoice Snapshots** | `dbo.Tariffs` stores effective date windows, base fees, per-KM rates, and night surcharges. `dbo.TowInvoices` references `TariffId` and snapshots charged amounts (`AppliedBaseFee`, `AppliedPricePerKm`, `AppliedNightSurcharge`), protected by `dbo.trg_TowInvoices_ProtectHistoricalPricing` so tariff updates never alter historical invoices. |
+| **4. Separate Insurer vs. Customer Payments** | `dbo.TowInvoices` tracks `InsurerBilledAmount` / `InsurerPaidAmount` / `InsurerBalanceDue` separately from `CustomerBilledAmount` / `CustomerPaidAmount` / `CustomerBalanceDue`. Each partial or full payment is stored as its own row in `dbo.InvoicePayments`. |
+| **5. BCrypt + 3NF `UserGroups` RBAC + `EXECUTE`-Only SQL Security** | `dbo.SystemUsers` uses **BCrypt (`cost = 12`)** (`BCrypt.Net-Next`) with no separate `PasswordSalt` column and inherits permissions from `dbo.UserGroups (GroupId)` (`CanDispatch`, `CanManageFleet`, `CanManagePolicies`, `CanManageBilling`, `CanManageUsers`). `db_tow_dispatcher_role` (`tow_cad_app_login`) has **zero direct table/view permissions** and **`EXECUTE` permissions ONLY on 35 authorized `dbo.usp_*` stored procedures**, called via 100% parameterized `ADO.NET`. |
+| **6. `SESSION_CONTEXT` Auditing & Odoo-Style Change Logs** | Every authenticated database connection calls `dbo.usp_SetDispatcherSessionContext` to set and validate `SESSION_CONTEXT` (`AppUserId`, `AppUsername`, `AppFullName`). Set-based triggers populate `dbo.TowAuditLogs` AND normalized `dbo.AuditChangeEvents` + `dbo.AuditChangeDetails` (`FieldName`, `OldValue`, `NewValue`, `ChangedAt`), surfaced as plain Odoo-style Change Logs inside every record Info view and per section. |
+| **7. Validated Road-Distance Routing** | Integrates live **OSRM** road-network routing (`OSRM_DrivingRoute`) plus a validated dispatcher road-distance override (`DispatcherVerifiedEstimate`) and explicit fallback (`HeuristicFallbackEstimate`) alongside `StraightLineDistanceKm`—never presenting straight-line Haversine distance as driving distance. |
+| **8. High-Volume Indexing (>120k Rows)** | Revised covering and filtered nonclustered indexes across `TowRequests`, `Vehicles`, and `TowInvoices` achieving **Index Seeks, 0 Key Lookups, and 0 Sort operators (`0–1 ms` SQL CPU/elapsed)** on the final actual execution plans. |
 
 ---
 
 ## 2. How to Run the Project
 
-### Step 1: Initialize the SQL Server Database (Create Schema + Seed >120,000 Rows)
+### Step 1: Initialize the SQL Server Database (19 Normalized 3NF Tables + >120,000 Rows)
 Run the 5 SQL scripts in order against your local SQL Server (`localhost`) using `sqlcmd` or SSMS:
 
 ```powershell
@@ -31,35 +33,46 @@ sqlcmd -S localhost -E -I -b -i "sql\05_performance_and_concurrency_tests.sql"
 ```
 
 ### Step 2: Configure Environment Variable (`.env`)
-Copy [`backend/.env.example`](backend/.env.example) to `backend/.env` and set your connection string (already configured locally):
+Copy [`backend/.env.example`](file:///c:/Users/user/Desktop/Uni/gin401/project/backend/.env.example) to `backend/.env` and set your least-privilege connection string:
 ```ini
-TOW_DB_CONNECTION_STRING=Server=localhost;Database=GIN401_TowDispatch;User Id=tow_cad_app_login;Password=YourPasswordHere;TrustServerCertificate=True;
+TOW_DB_CONNECTION_STRING=Server=localhost;Database=GIN401_TowDispatch;User Id=tow_cad_app_login;Password=TowApp_2026!Secure#Login;TrustServerCertificate=True;
 ```
 
-### Step 3: Start the Application
-**Option A — 1-Click Start (Serves both API and built React Frontend on `http://localhost:5050`):**
-Double-click [`start_app.bat`](start_app.bat) or run:
+### Step 3: Build & Start the Application
+
+**Sequential Production Build Order** (always build `frontend` before `backend` because Vite outputs into `backend/wwwroot`):
+```powershell
+cd frontend
+npm run build
+cd ..\backend
+dotnet build -c Release
+```
+
+**Start the Unified Web API + CAD Portal (`http://localhost:5050`):**
+Double-click [`start_app.bat`](file:///c:/Users/user/Desktop/Uni/gin401/project/start_app.bat) or run:
 ```powershell
 cd backend
 dotnet run --urls "http://localhost:5050"
 ```
 Then open **[http://localhost:5050](http://localhost:5050)** in your browser.
 
-**Option B — Run React Vite Dev Server Separately (Port `5173`):**
-```powershell
-cd frontend
-npm install
-npm run dev
-```
+### Seeded Command Desk Operator Credentials (BCrypt Cost=12)
+
+| Operator Username | Password | Full Name & Role | Station |
+| :--- | :--- | :--- | :--- |
+| `assaad.khalife` | `Tracker@2026` | Assaad Khalife — Chief Operations & CAD Director | `BEY-CMD-01` |
+| `dispatch.beirut` | `Dispatch@2026` | Rami Nassar — Senior Emergency Dispatcher | `BEY-DSK-04` |
+| `fleet.manager` | `Fleet@2026` | Karim Haddad — Fleet & Recovery Supervisor | `BEY-FLT-02` |
+| `claims.underwriter` | `Claims@2026` | Maya Khoury — Insurance Policy Specialist | `BEY-INS-01` |
 
 ---
 
 ## 3. Repository Structure
-* [`sql/01_create_schema_and_indexes.sql`](sql/01_create_schema_and_indexes.sql) — Database, 8 tables, constraints, and covering indexes
-* [`sql/02_programmability_logic.sql`](sql/02_programmability_logic.sql) — Functions, triggers, window views, and transactional stored procedures
-* [`sql/03_seed_120k_data.sql`](sql/03_seed_120k_data.sql) — Reference data + 120,007 rows in `dbo.TowRequests`
-* [`sql/04_security_least_privilege.sql`](sql/04_security_least_privilege.sql) — Least-privilege login (`tow_cad_app_login`) and role (`db_tow_dispatcher_role`)
-* [`sql/05_performance_and_concurrency_tests.sql`](sql/05_performance_and_concurrency_tests.sql) — Execution plan and business rule verification queries
-* [`backend/Program.cs`](backend/Program.cs) — Standalone C# 9 ADO.NET backend (`Microsoft.Data.SqlClient`)
-* [`frontend/src/App.jsx`](frontend/src/App.jsx) — Standalone React.js CAD Dispatch frontend
-* [`REPORT.md`](REPORT.md) — Full project report, ERD, execution plans, test results, and AI usage disclaimer
+* [`sql/01_create_schema_and_indexes.sql`](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/01_create_schema_and_indexes.sql) — Database, 19 normalized 3NF tables (`UserGroups`, `SystemUsers`, `AuditChangeEvents`, `AuditChangeDetails`, etc.), sequences, constraints, and revised covering/filtered indexes
+* [`sql/02_programmability_logic.sql`](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/02_programmability_logic.sql) — Scalar/TVF functions, 13 set-based `SESSION_CONTEXT` audit & historical pricing triggers, analytical views, and 35 `dbo.usp_*` stored procedures
+* [`sql/03_seed_120k_data.sql`](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/03_seed_120k_data.sql) — Normalized `UserGroups`, BCrypt operator accounts, vehicles, drivers, assignments, tariffs, 120,000+ `TowRequests`, 120,000+ `TowInvoices`, and 148,000+ `InvoicePayments`
+* [`sql/04_security_least_privilege.sql`](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/04_security_least_privilege.sql) — Least-privilege login (`tow_cad_app_login`) and `EXECUTE`-only role (`db_tow_dispatcher_role`) across all 35 authorized procedures
+* [`sql/05_performance_and_concurrency_tests.sql`](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/05_performance_and_concurrency_tests.sql) — Final actual execution plans on >120k rows and automated business-rule/security verification suite
+* [`backend/Program.cs`](file:///c:/Users/user/Desktop/Uni/gin401/project/backend/Program.cs) — Standalone C# .NET 9 ADO.NET backend (`CommandType.StoredProcedure` + BCrypt + `SESSION_CONTEXT` + OSRM routing)
+* [`frontend/src/App.jsx`](file:///c:/Users/user/Desktop/Uni/gin401/project/frontend/src/App.jsx) — Standalone React.js CAD Dispatch, Configuration Hub (`Users`, `User Groups`, `Tow Trucks`, `Drivers`), Tariffs, Split Billing, Concurrency, Archive, and Section-Scoped Change Log UI
+* [`REPORT.md`](file:///c:/Users/user/Desktop/Uni/gin401/project/REPORT.md) & [`GIN401_Lab_Project_Report.docx`](file:///c:/Users/user/Desktop/Uni/gin401/project/GIN401_Lab_Project_Report.docx) — Complete technical report, 19-table 3NF ERD, final actual execution plans, test results, and AI usage disclaimer

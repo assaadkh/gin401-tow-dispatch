@@ -1,7 +1,7 @@
 @echo off
 echo ============================================================================
-echo   GIN401 Lab Project - Roadside Assistance ^& Towing CAD Dispatch System
-echo   Starting Standalone C# ADO.NET Backend + Built React.js Frontend...
+echo   Tracker Connect - Roadside Assistance ^& Fleet CAD Command Platform
+echo   Starting Command Server on http://localhost:5050 ...
 echo ============================================================================
 set PATH=C:\Program Files\dotnet;C:\Program Files\nodejs;%PATH%
 cd /d "%~dp0backend"

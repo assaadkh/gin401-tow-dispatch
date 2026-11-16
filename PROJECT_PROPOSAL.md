@@ -4,123 +4,76 @@
 **Course:** GIN401 — Lab Project  
 **Student / GitHub Account:** Assaad Khalife (`assaadkh`)  
 **Repository:** [https://github.com/assaadkh/gin401-tow-dispatch](https://github.com/assaadkh/gin401-tow-dispatch)  
-**Technology Stack:** Microsoft SQL Server (`T-SQL`) • Standalone C# (.NET 9 Web API with Pure `ADO.NET` / `Microsoft.Data.SqlClient`) • Standalone React.js + Google Maps / OSRM CAD UI  
+**Technology Stack:** Microsoft SQL Server (`T-SQL`) • Standalone C# (.NET 9 Web API with Pure `ADO.NET` / `Microsoft.Data.SqlClient` + `BCrypt.Net-Next`) • Standalone React.js + Google Maps / OSRM CAD UI  
 
 ---
 
 ## 1. Executive Summary & Real-World Problem Statement
-Roadside assistance and towing dispatch centers in Lebanon manage thousands of emergency breakdown and accident calls on behalf of major insurance providers (e.g., *Bankers Assurance*, *LIA Assurex*, *Fidelity*, *Allianz SNA*). Dispatchers must simultaneously:
-1. Identify the caller (via Telephony Caller-ID) and match their active insurance policy.
-2. Evaluate complex **sequential insurance coverage tiers** (Mechanical vs. Accident vs. Winch quotas, maximum covered kilometers, overage billing per kilometer, and mandatory **cooldown days between tows**).
-3. Enforce strict **Lebanese vehicle license plate rules** (mandatory plate code letter such as `G`, `B`, `M`, `Z` plus digits, or explicit `NO-PLATE` unregistered showroom handling).
-4. Dispatch the optimal tow truck on a **Live Google Maps CAD interface** with real-time traffic, OSRM road-network polylines, and multi-stop truck priority queues (`1P → 1D → 2P → 2D`) without allowing two concurrent dispatchers to double-assign the same job or exceed a customer's remaining policy quota.
-5. Enforce **financial and audit immutability** once a tow reaches a finalized state (`Done`, `UnableToLoad`, or `Rejected`), and accurately compute **driver payroll, night-shift overtime (19:00–07:00), off-day bonuses, and on-scene cash deductions**.
-
-This project proposes and implements a **standalone, high-concurrency, 3-tier enterprise application** backed by **Microsoft SQL Server (`GIN401_TowDispatch`)** where all core domain invariants, concurrency locks, and high-volume analytics (>120,000 rows) are enforced directly inside the database engine.
+Roadside assistance and towing dispatch centers in Lebanon manage thousands of emergency breakdown and accident calls on behalf of major insurance providers (*Bankers Assurance*, *LIA Assurex*, *Fidelity*, *AXA Middle East*, *Allianz SNA*, *Medgulf*). Dispatchers must simultaneously:
+1. Identify the caller and normalized vehicle (`dbo.Vehicles`) and match their active insurance policy (`dbo.InsurancePolicies`).
+2. Evaluate **sequential insurance coverage tiers** (`dbo.PolicyQuotaTiers` for Mechanical vs. Accident/Winch quotas, covered kilometers, and mandatory **cooldown intervals between tows**).
+3. Calculate real driving distance via **OSRM road-network routing** (`OSRM_DrivingRoute`) or an explicitly validated road-distance workflow (`DispatcherVerifiedEstimate` / `HeuristicFallbackEstimate`), never presenting straight-line geodesic distance as driving distance.
+4. Apply active rate schedules from **`dbo.Tariffs`** onto **`dbo.TowInvoices`** so historical invoice pricing remains immutable when tariffs change, while tracking **Insurer receivables separately from Customer overage/direct obligations** across individual partial or full payment records in **`dbo.InvoicePayments`**.
+5. Dispatch internal GPS-tracked tow trucks (`dbo.TowTrucks`) decoupled from normalized **`dbo.Drivers`** via historical **`dbo.DriverTruckAssignments`**, or outsource to external **`dbo.Subcontractors`**, with full **`SESSION_CONTEXT`** dispatcher audit attribution in **`dbo.TowAuditLogs`**.
 
 ---
 
-## 2. Proposed System Architecture
-The system is designed as a standalone 3-tier architecture without any external ORM (no Entity Framework) to demonstrate mastery of native T-SQL and `ADO.NET`:
+## 2. System Architecture (Pure ADO.NET + `EXECUTE`-Only Stored Procedures)
 
-```
+```text
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                   PRESENTATION TIER (React.js + Google Maps)               │
-│  • Google Maps Road/Traffic/Hybrid CAD Map + OSRM Real Road Polylines      │
-│  • Slide-Over Fleet & Ongoing Jobs Drawer with Stop Priority Reordering    │
-│  • Built-In Lebanon Location Picker Modal (Photon/Nominatim + Reverse Geo) │
-│  • Telephony Call Pop-Up, Logical Kanban Board & Concurrency/Perf Labs   │
+│  • Live Fleet CAD Map + Multi-Stop Truck Queue Reordering                  │
+│  • Normalized Call Desk (Vehicles, Subcontractors, OSRM & Tariff Preview)  │
+│  • Drivers & Assignment History, Tariffs Catalog & Split Invoice Payments  │
+│  • Concurrency Lab, SESSION_CONTEXT Audit Trail & >120k Archive Search     │
 └────────────────────────────────────┬───────────────────────────────────────┘
-                                     │ REST JSON over HTTP
+                                     │ REST JSON over HTTP (Bearer Token)
                                      ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
 │               APPLICATION TIER (C# .NET 9 Web API + ADO.NET)               │
-│  • 100% Parameterized SqlCommand & SqlParameter (Zero String Concat)       │
-│  • Multi-Threaded Concurrency Race Simulator (Task.WhenAll)                │
-│  • Least-Privilege Connection Factory (Reads Credentials from .env)        │
+│  • BCrypt (Cost=12) Authentication (Zero Separate PasswordSalt Column)     │
+│  • Sets & Validates SQL SESSION_CONTEXT on Every Pooled Connection         │
+│  • 100% Parameterized CommandType.StoredProcedure Calls + OSRM Client      │
 └────────────────────────────────────┬───────────────────────────────────────┘
-                                     │ TDS Protocol (Microsoft.Data.SqlClient)
+                                     │ TDS Protocol (tow_cad_app_login)
                                      ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
 │              DATABASE TIER (Microsoft SQL Server: GIN401_TowDispatch)      │
-│  • 8 Relational Tables (120,007 Rows in dbo.TowRequests)                   │
-│  • 5 Stored Procedures, 2 Functions (Scalar + TVF), 1 AFTER Trigger,       │
-│    2 Analytical Views (Window Functions & Payroll Aggregation)             │
+│  • 16 Normalized 3NF Tables (120,000+ TowRequests & TowInvoices)           │
+│  • EXECUTE-Only Role (db_tow_dispatcher_role) Across 24 Stored Procedures  │
 │  • Pessimistic Locking (UPDLOCK, ROWLOCK) + Optimistic (ROWVERSION)        │
-│  • 4 Covering Nonclustered Indexes (Index Seek, 0 Key Lookups, 0 Sort)     │
+│  • Revised Covering & Filtered Indexes (Final Execution Plans: 0–1 ms)     │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Database Schema & Integrity Constraints Plan (10 Points)
-The database `GIN401_TowDispatch` consists of **8 normalized tables** in Third Normal Form (3NF) enforcing real business rules via `PRIMARY KEY`, `FOREIGN KEY`, `UNIQUE`, `NOT NULL`, and `CHECK` constraints:
+## 3. Normalized 3NF Database Schema (16 Tables)
 
-| # | Table Name | Core Role | Enforced Constraints & Business Rules |Target Row Volume |
+| # | Table Name | Core Role & Normalized Responsibility | Key Enforced Constraints | Seeded Volume |
 |---|---|---|---|---|
-| 1 | `dbo.InsuranceProviders` | Insurance companies | `UNIQUE (ProviderCode)`, `CHECK (DefaultExtraKmRate >= 0)` | 4 rows |
-| 2 | `dbo.PlateCodes` | Lebanese plate prefixes (`G`, `B`, `M`, `O`, etc.) | `UNIQUE (CodeLetter)`, `CHECK (LEN(TRIM(CodeLetter)) >= 1)` | 8+ rows (extensible) |
-| 3 | `dbo.Customers` | Vehicle owners & Caller-ID lookup | `FK -> PlateCodes`, `CK_Customers_PlateRule` (requires `PlateCodeID` unless `NoPlate = 1`) | 2,005 rows |
-| 4 | `dbo.InsurancePolicies` | Annual policies & quota counters | `UNIQUE (PolicyNumber)`, `CK_Policies_DateOrder`, `CK_Policies_QuotaBounds` (`Used <= Max`) | 2,005 rows |
-| 5 | `dbo.PolicyQuotaTiers` | Sequential coverage tiers & cooldown rules | `UNIQUE (PolicyID, SequenceOrder)`, `CHECK (MinIntervalDays >= 0)` | 10+ rows |
-| 6 | `dbo.TowTrucks` | Fleet GPS, driver payroll & off-day status | `CK_TowTrucks_Status`, `CK_TowTrucks_LebanonLat/Lng`, `BaseMonthlySalary`, `OvertimeRatePerTow` | 8 rows |
-| 7 | **`dbo.TowRequests`** | **Core CAD dispatch & financial ledger** | **7 `CHECK` constraints** (`Status`, `IncidentType`, `PlateRule`, `NonNegDistance`, `NonNegMoney`, `SubcontractorRule`), **`RowVersionToken ROWVERSION`** | **120,007 rows (>100k requirement)** |
-| 8 | `dbo.TowAuditLogs` | Immutable audit trail | Populated automatically by `dbo.trg_TowRequests_ImmutabilityAndAudit` | Dynamic |
+| 1 | `dbo.SystemUsers` | Dispatch operators, BCrypt hashes & granular RBAC permissions | `UNIQUE (Username)`, `CK_SystemUsers_BcryptFormat`, `CK_SystemUsers_AccessRole` | 4+ operators |
+| 2 | `dbo.InsuranceProviders` | Partner insurance companies | `UNIQUE (ProviderName)` | 6 insurers |
+| 3 | `dbo.PlateCodes` | Lebanese regional plate prefixes (`B`, `M`, `G`, ...) | `UNIQUE (Code)` | 10 codes |
+| 4 | `dbo.Customers` | Policyholders & callers | `UNIQUE (Phone)` | 2,000 rows |
+| 5 | `dbo.Vehicles` | Normalized vehicle plate, model & owner | `CK_Vehicles_PlateRule`, filtered `UX_Vehicles_RegisteredPlate` | 4,000 rows |
+| 6 | `dbo.InsurancePolicies` | Policy headers & validity dates | `UNIQUE (PolicyNumber)`, `CK_Policies_Dates`, `ROWVERSION` | 1,500 rows |
+| 7 | `dbo.PolicyQuotaTiers` | Sequential Mechanical/Accident quota tiers | `CK_QuotaTiers_Bounds` (`UsedTows <= AllowedTows`), `ROWVERSION` | 2,600+ rows |
+| 8 | `dbo.Drivers` | Standalone driver HR, phone & overtime rates | `UNIQUE (EmployeeCode)`, `UNIQUE (Phone)` (1-row phone update) | 10 drivers |
+| 9 | `dbo.TowTrucks` | Pure tow truck hardware & live GPS telemetry | `UNIQUE (TruckCode)`, `UNIQUE (LicensePlate)`, Lebanon GPS `CHECK`s | 8 trucks |
+| 10 | `dbo.DriverTruckAssignments` | Historical & active driver-truck assignments | `StartDate`/`EndDate` + filtered `UX` (`WHERE EndDate IS NULL`) | 12+ rows |
+| 11 | `dbo.Subcontractors` | External towing partners | `UNIQUE (CompanyName)`, `DefaultDispatchFee >= 0` | 5 partners |
+| 12 | `dbo.Tariffs` | Historical & active service pricing schedules | `UNIQUE (TariffCode)`, `EffectiveFrom <= EffectiveTo` | 4 tariffs |
+| 13 | `dbo.TowRequests` | Normalized CAD dispatch & road-distance ledger | FKs to `Vehicles`, `Policies`, `Trucks`, `Drivers`, `Subcontractors`; `DistanceSource` `CHECK`; `ROWVERSION` | **120,007+ rows** |
+| 14 | `dbo.TowInvoices` | Snapshot tariff pricing & split insurer/customer balances | `FK -> Tariffs`, separate `Insurer*` & `Customer*` columns, immutability trigger | **120,007+ rows** |
+| 15 | `dbo.InvoicePayments` | Individual partial/full payment records per payer | `PayerType IN ('InsuranceProvider','Customer')`, `CK_InvoicePayments_PayerTarget` | **148,173+ rows** |
+| 16 | `dbo.TowAuditLogs` | Immutable trigger audit log with `SESSION_CONTEXT` | Records `DispatcherUserId`, `DispatcherUsername`, `DispatcherFullName`, `SqlLoginName` | Dynamic |
 
 ---
 
-## 4. T-SQL Programmability Plan (10 Points)
-All core business logic is implemented inside SQL Server rather than in application memory:
-1. **Scalar Function (`dbo.fn_CalculateRoadDistanceKm`):** Computes geodesic Haversine distance multiplied by a `1.28` Lebanese mountain/coastal road winding factor.
-2. **Inline Table-Valued Function (`dbo.tvf_CheckPolicyEligibility`):** Evaluates policy expiration, sequential tier matching (`dbo.PolicyQuotaTiers`), remaining Mechanical vs. Accident tow quotas, covered distance, extra kilometer charges, and **cooldown days passed (`DATEDIFF(DAY, LastTowDate, SYSDATETIME()) < MinIntervalDays`)**.
-3. **Database Trigger (`dbo.trg_TowRequests_ImmutabilityAndAudit`):**
-   - Blocks any `DELETE` on `dbo.TowRequests` (`RAISERROR 50001`).
-   - Blocks any status reversal or financial edit once a tow reaches a finalized state (`Done`, `UnableToLoad`, `Rejected`) (`RAISERROR 50002`).
-   - Automatically records every state change into `dbo.TowAuditLogs`.
-4. **Window Functions Views:**
-   - `dbo.vw_FleetPriorityQueueAndRankings`: Uses `ROW_NUMBER() OVER (PARTITION BY AssignedTruckID ORDER BY QueuePosition)`, `SUM(DistanceKm) OVER (PARTITION BY AssignedTruckID)`, and `COUNT(*) OVER (...)`.
-   - `dbo.vw_DriverPayrollAndCashReport`: Computes driver base salary, night-shift (`19:00–07:00`) and off-day overtime tow counts, earned overtime bonuses, on-scene cash deductions, and net payout.
-5. **Stored Procedures:**
-   - `dbo.usp_CreateTowRequest`
-   - `dbo.usp_ApproveAndDispatchTow`
-   - `dbo.usp_UpdateTowLifecycleStatus`
-   - `dbo.usp_UpdateDraftTowOptimistic`
-   - `dbo.usp_ReorderTruckJobQueue`
-
----
-
-## 5. Transactions & Concurrency Control Plan (10 Points)
-To prevent race conditions when multiple dispatchers operate simultaneously:
-1. **Explicit ACID Transactions:** Every multi-table operation uses `SET XACT_ABORT ON`, `BEGIN TRANSACTION`, `TRY...CATCH`, and safe `IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION`.
-2. **Pessimistic Locking (`WITH (UPDLOCK, ROWLOCK)`):** Inside `dbo.usp_ApproveAndDispatchTow`, the target `TowRequests` row and `InsurancePolicies` row are locked with `UPDLOCK, ROWLOCK` before checking status and remaining quota. If Dispatcher A and Dispatcher B click "Approve & Dispatch" at the exact same millisecond, Thread B waits on the row lock and cleanly aborts with Error `50004` once Thread A commits.
-3. **Optimistic Concurrency (`ROWVERSION`):** `dbo.TowRequests` includes `RowVersionToken ROWVERSION`. `dbo.usp_UpdateDraftTowOptimistic` verifies `WHERE RequestID = @RequestID AND RowVersionToken = @ExpectedRowVersion`, raising Error `50008` (HTTP `409 Conflict`) if another user modified the row.
-
----
-
-## 6. High-Volume Performance & Indexing Plan (10 Points)
-With **120,007 rows** in `dbo.TowRequests`, we design **4 covering nonclustered indexes** so our key operational and analytical queries execute with **Index Seek, 0 Key Lookups, and 0 Sort**:
-1. `IX_TowRequests_Status_CreatedAt_Covering` on `(Status ASC, CreatedAt DESC) INCLUDE (RequestNumber, PolicyID, CustomerID, AssignedTruckID, IncidentType, DistanceKm, ExtraChargeAmount, CashCollectedByDriver, IsNightShiftOvertime, PlateNumber)`.
-2. `IX_TowRequests_ActiveTruckQueue` filtered on `(AssignedTruckID ASC, QueuePosition ASC) WHERE Status IN ('Approved', 'InProgress')`.
-3. `IX_TowRequests_PolicyID_Status_CreatedAt` on `(PolicyID ASC, Status ASC, CreatedAt DESC) INCLUDE (IncidentType, DistanceKm, ExtraChargeAmount)`.
-4. `IX_TowRequests_PlateNumber_CreatedAt` on `(PlateNumber ASC, CreatedAt DESC) INCLUDE (Status, PolicyID, IncidentType, PickupAddress)`.
-
-All queries use **SARGable predicates** (`CreatedAt >= @Start AND CreatedAt < @End` rather than `YEAR(CreatedAt) = 2026`).
-
----
-
-## 7. Security & Least-Privilege Architecture Plan (10 Points)
-1. **100% Parameterized Queries:** Every SQL call in [`backend/Program.cs`](file:///c:/Users/user/Desktop/Uni/gin401/project/backend/Program.cs) uses `SqlCommand` with explicit `SqlParameter` types (`SqlDbType.NVarChar`, `SqlDbType.DateTime2`, `SqlDbType.Int`, `SqlDbType.Binary`). Classic payloads such as `' OR 1=1 --` are treated strictly as literal text.
-2. **Dedicated Least-Privilege SQL Server Login & Role:**
-   - Login: `tow_cad_app_login` → Database User: `tow_cad_app_user` → Role: `db_tow_dispatcher_role`.
-   - Granted `SELECT` and `EXECUTE` only on required tables, views, functions, and stored procedures.
-   - Explicitly restricted with `DENY DELETE ON SCHEMA::dbo` and zero DDL (`ALTER`/`DROP`) or `sysadmin` privileges.
-3. **Zero Hardcoded Passwords in Source Code:** Database credentials are loaded from gitignored `backend/.env` (with `backend/.env.example` committed as a template).
-
----
-
-## 8. Project Milestones & Deliverables
-1. **Milestone 1 — Schema, Constraints & >120k Data Seeding:** `sql/01_create_schema_and_indexes.sql` & `sql/03_seed_120k_data.sql` *(Completed)*
-2. **Milestone 2 — T-SQL Programmability, Triggers & Views:** `sql/02_programmability_logic.sql` *(Completed)*
-3. **Milestone 3 — Security & Performance Verification Scripts:** `sql/04_security_least_privilege.sql` & `sql/05_performance_and_concurrency_tests.sql` *(Completed)*
-4. **Milestone 4 — Standalone C# ADO.NET Web API & React CAD UI:** `backend/Program.cs` & `frontend/src/App.jsx` *(Completed)*
-5. **Milestone 5 — Technical Report & Defense Demo:** `REPORT.md`, `PROJECT_PROPOSAL.md`, and live interactive lab tabs *(Completed)*
+## 4. Programmability, Concurrency, Security & Performance Summary
+1. **T-SQL Programmability ([02_programmability_logic.sql](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/02_programmability_logic.sql)):** 2 schema-bound scalar distance functions, 2 table-valued functions (`tvf_GetActiveTariff`, `tvf_CheckPolicyEligibility`), 2 `AFTER` immutability/audit triggers (`trg_TowRequests_ImmutabilityAndAudit`, `trg_TowInvoices_ProtectHistoricalPricing`), 2 window/aggregation views, and 24 `dbo.usp_*` stored procedures (including Admin user & permission management).
+2. **Transactions & Concurrency:** `BEGIN TRANSACTION` + `TRY...CATCH` + `ROLLBACK` with `WITH (UPDLOCK, ROWLOCK)` pessimistic locking on policy quota tiers (`usp_ApproveAndDispatchTow`) and `ROWVERSION` optimistic concurrency on draft edits (`usp_UpdateDraftTowOptimistic`).
+3. **Security ([04_security_least_privilege.sql](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/04_security_least_privilege.sql)):** BCrypt (`cost = 12`) password hashing, `db_tow_dispatcher_role` restricted strictly to `EXECUTE` on authorized stored procedures (zero direct table/view access), 100% parameterized `ADO.NET`, and mandatory per-connection `SESSION_CONTEXT` validation.
+4. **Performance ([05_performance_and_concurrency_tests.sql](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/05_performance_and_concurrency_tests.sql)):** Revised covering and filtered nonclustered indexes over the 120,000+ normalized rows delivering pure `Index Seek` plans (`0` Key Lookups, `0` Sort operators, `0–1 ms` runtime) documented via final actual execution plans in [REPORT.md](file:///c:/Users/user/Desktop/Uni/gin401/project/REPORT.md).

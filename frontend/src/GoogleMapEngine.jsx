@@ -261,11 +261,22 @@ export function GoogleCadMap({
                   onSelectRoute && onSelectRoute(r);
                 }}
               />
+              {isHighlighted && (
+                <polyline
+                  points={pointsAttr}
+                  fill="none"
+                  stroke="rgba(255, 122, 0, 0.28)"
+                  strokeWidth={12}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ pointerEvents: 'none' }}
+                />
+              )}
               <polyline
                 points={pointsAttr}
                 fill="none"
-                stroke={isHighlighted ? '#714B67' : '#EF4444'}
-                strokeWidth={isHighlighted ? 6 : 4}
+                stroke={isHighlighted ? '#FF6B00' : '#EF4444'}
+                strokeWidth={isHighlighted ? 5.5 : 3.5}
                 strokeDasharray={isHighlighted ? 'none' : '6, 8'}
                 strokeOpacity={isHighlighted ? 1 : 0.85}
                 strokeLinecap="round"
@@ -293,8 +304,8 @@ export function GoogleCadMap({
                 cx={pos.x}
                 cy={pos.y}
                 r={26}
-                fill="rgba(113, 75, 103, 0.25)"
-                stroke="#714B67"
+                fill="rgba(255, 122, 0, 0.22)"
+                stroke="#FF6B00"
                 strokeWidth={4}
                 className="radar-pulse-ring"
               />
@@ -326,8 +337,8 @@ export function GoogleCadMap({
                 style={{
                   left: `${pPos.x}px`,
                   top: `${pPos.y}px`,
-                  background: isHighlighted ? '#714B67' : '#EF4444',
-                  transform: `translate(-50%, -50%) scale(${isHighlighted ? 1.15 : 1})`
+                  background: isHighlighted ? '#FF6B00' : '#EF4444',
+                  transform: `translate(-50%, -50%) scale(${isHighlighted ? 1.16 : 1})`
                 }}
                 onClick={e => {
                   e.stopPropagation();
@@ -409,8 +420,8 @@ export function GoogleCadMap({
                 left: `${pos.x}px`,
                 top: `${pos.y}px`,
                 background: bg,
-                borderColor: isSelected ? '#714B67' : '#ffffff',
-                transform: `translate(-50%, -50%) scale(${isSelected ? 1.2 : 1})`
+                borderColor: isSelected ? '#FF6B00' : '#ffffff',
+                transform: `translate(-50%, -50%) scale(${isSelected ? 1.22 : 1})`
               }}
               onClick={e => {
                 e.stopPropagation();
@@ -656,7 +667,12 @@ export function GoogleLocationPickerMap({
           }}
           title="Drag pin or click anywhere on the map"
         >
-          ●
+          <svg width="36" height="44" viewBox="0 0 36 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 0C8.059 0 0 8.059 0 18c0 12.45 15.65 24.42 16.82 25.3a1.98 1.98 0 002.36 0C20.35 42.42 36 30.45 36 18 36 8.059 27.941 0 18 0z" fill="#FF6B00"/>
+            <path d="M18 2C9.163 2 2 9.163 2 18c0 10.72 13.06 21.48 16 23.82C20.94 39.48 34 28.72 34 18 34 9.163 26.837 2 18 2z" stroke="#FFFFFF" strokeOpacity="0.45" strokeWidth="1.5"/>
+            <circle cx="18" cy="18" r="7" fill="#FFFFFF"/>
+            <circle cx="18" cy="18" r="3.5" fill="#0B0F19"/>
+          </svg>
         </div>
       </div>
 
