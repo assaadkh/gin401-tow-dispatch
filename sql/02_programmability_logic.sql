@@ -478,7 +478,7 @@ WITH MonthlyDriverTows AS
         COUNT(CASE WHEN tr.IsNightShift = 1 THEN 1 END) AS NightShiftTowsCount
     FROM dbo.TowRequests AS tr
     WHERE tr.Status = 'Done'
-      AND tr.CreatedAt >= '2026-11-01'
+      AND tr.CreatedAt >= DATEFROMPARTS(YEAR(SYSDATETIME()), MONTH(SYSDATETIME()), 1)
       AND tr.AssignedDriverId IS NOT NULL
     GROUP BY tr.AssignedDriverId
 ),
@@ -489,7 +489,7 @@ MonthlyDriverCash AS
         SUM(ip.AmountPaid) AS TotalCashCollectedByDriver
     FROM dbo.InvoicePayments AS ip
     WHERE ip.PaymentMethod = 'OnSceneCash'
-      AND ip.PaidAt >= '2026-11-01'
+      AND ip.PaidAt >= DATEFROMPARTS(YEAR(SYSDATETIME()), MONTH(SYSDATETIME()), 1)
       AND ip.CollectedByDriverId IS NOT NULL
     GROUP BY ip.CollectedByDriverId
 )
@@ -551,6 +551,10 @@ BEGIN
     EXEC sys.sp_set_session_context @key = N'AppUsername', @value = NULL;
     EXEC sys.sp_set_session_context @key = N'AppFullName', @value = NULL;
     EXEC sys.sp_set_session_context @key = N'AppAccessRole', @value = NULL;
+    EXEC sys.sp_set_session_context @key = N'CanDispatch', @value = NULL;
+    EXEC sys.sp_set_session_context @key = N'CanManageFleet', @value = NULL;
+    EXEC sys.sp_set_session_context @key = N'CanManagePolicies', @value = NULL;
+    EXEC sys.sp_set_session_context @key = N'CanManageBilling', @value = NULL;
     EXEC sys.sp_set_session_context @key = N'CanManageUsers', @value = NULL;
 END;
 GO
@@ -597,13 +601,21 @@ BEGIN
     DECLARE @DbUsername VARCHAR(60),
             @DbFullName NVARCHAR(120),
             @DbGroupCode VARCHAR(30),
+            @DbCanDispatch BIT,
+            @DbCanManageFleet BIT,
+            @DbCanManagePolicies BIT,
+            @DbCanManageBilling BIT,
             @DbCanManageUsers BIT;
 
     SELECT
-        @DbUsername       = u.Username,
-        @DbFullName       = u.FullName,
-        @DbGroupCode      = ug.GroupCode,
-        @DbCanManageUsers = ug.CanManageUsers
+        @DbUsername          = u.Username,
+        @DbFullName          = u.FullName,
+        @DbGroupCode         = ug.GroupCode,
+        @DbCanDispatch       = ug.CanDispatch,
+        @DbCanManageFleet    = ug.CanManageFleet,
+        @DbCanManagePolicies = ug.CanManagePolicies,
+        @DbCanManageBilling  = ug.CanManageBilling,
+        @DbCanManageUsers    = ug.CanManageUsers
     FROM dbo.SystemUsers AS u
     INNER JOIN dbo.UserGroups AS ug ON u.GroupId = ug.GroupId
     WHERE u.UserId = @UserId
@@ -620,6 +632,10 @@ BEGIN
     EXEC sys.sp_set_session_context @key = N'AppUsername', @value = @DbUsername;
     EXEC sys.sp_set_session_context @key = N'AppFullName', @value = @DbFullName;
     EXEC sys.sp_set_session_context @key = N'AppAccessRole', @value = @DbGroupCode;
+    EXEC sys.sp_set_session_context @key = N'CanDispatch', @value = @DbCanDispatch;
+    EXEC sys.sp_set_session_context @key = N'CanManageFleet', @value = @DbCanManageFleet;
+    EXEC sys.sp_set_session_context @key = N'CanManagePolicies', @value = @DbCanManagePolicies;
+    EXEC sys.sp_set_session_context @key = N'CanManageBilling', @value = @DbCanManageBilling;
     EXEC sys.sp_set_session_context @key = N'CanManageUsers', @value = @DbCanManageUsers;
 
     IF @UpdateLastLogin = 1
@@ -632,7 +648,12 @@ BEGIN
     SELECT
         TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT) AS ConfirmedUserId,
         CAST(SESSION_CONTEXT(N'AppUsername') AS VARCHAR(60)) AS ConfirmedUsername,
-        CAST(SESSION_CONTEXT(N'AppFullName') AS NVARCHAR(120)) AS ConfirmedFullName;
+        CAST(SESSION_CONTEXT(N'AppFullName') AS NVARCHAR(120)) AS ConfirmedFullName,
+        ISNULL(@DbCanDispatch, 0) AS CanDispatch,
+        ISNULL(@DbCanManageFleet, 0) AS CanManageFleet,
+        ISNULL(@DbCanManagePolicies, 0) AS CanManagePolicies,
+        ISNULL(@DbCanManageBilling, 0) AS CanManageBilling,
+        ISNULL(@DbCanManageUsers, 0) AS CanManageUsers;
 END;
 GO
 
@@ -655,6 +676,9 @@ CREATE OR ALTER PROCEDURE dbo.usp_CheckPolicyAndPreviewTariff
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    IF TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT) IS NULL
+        THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
     DECLARE @StraightKm DECIMAL(8,2) = dbo.fn_CalculateStraightLineDistanceKm(@PickupLat, @PickupLng, @DestinationLat, @DestinationLng);
     DECLARE @FinalSource VARCHAR(30) = @DistanceSource;
@@ -790,6 +814,10 @@ BEGIN
     DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Dispatch permission is required for this operation.', 1;
 
     BEGIN TRY
         BEGIN TRANSACTION;
@@ -1073,6 +1101,10 @@ BEGIN
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Dispatch permission is required for this operation.', 1;
+
     BEGIN TRY
         BEGIN TRANSACTION;
 
@@ -1292,6 +1324,11 @@ BEGIN
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageBilling') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+       AND NOT (@@NESTLEVEL > 1 AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 1)
+        THROW 50060, 'Access Denied: Billing & Settlement permission is required to record invoice payments.', 1;
+
     BEGIN TRY
         BEGIN TRANSACTION;
 
@@ -1419,17 +1456,41 @@ BEGIN
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Dispatch permission is required for this operation.', 1;
+
     BEGIN TRY
         BEGIN TRANSACTION;
 
         DECLARE @AssignedTruckId INT,
-                @AssignedDriverId INT;
+                @AssignedDriverId INT,
+                @OldStatus VARCHAR(25);
 
         SELECT
             @AssignedTruckId  = tr.AssignedTruckId,
-            @AssignedDriverId = tr.AssignedDriverId
+            @AssignedDriverId = tr.AssignedDriverId,
+            @OldStatus        = tr.Status
         FROM dbo.TowRequests AS tr WITH (UPDLOCK, ROWLOCK)
         WHERE tr.TowRequestId = @TowRequestId;
+
+        IF @OldStatus IS NULL
+            THROW 50044, 'Tow Request not found.', 1;
+
+        IF @OldStatus NOT IN ('Done', 'UnableToLoad', 'Rejected')
+        BEGIN
+            IF @NewStatus NOT IN ('PendingInsurance', 'InProgress', 'Done', 'UnableToLoad', 'Rejected')
+                THROW 50045, 'Lifecycle Transition Violation: Invalid target status or direct Approval bypass.', 1;
+
+            IF @OldStatus IN ('Draft', 'PendingInsurance') AND @NewStatus NOT IN ('PendingInsurance', 'Rejected')
+                THROW 50045, 'Lifecycle Transition Violation: Ticket must be Approved & Dispatched before starting or completing recovery.', 1;
+
+            IF @OldStatus = 'Approved' AND @NewStatus NOT IN ('InProgress', 'Done', 'UnableToLoad', 'Rejected')
+                THROW 50045, 'Lifecycle Transition Violation: Approved ticket cannot regress to a pre-dispatch state.', 1;
+
+            IF @OldStatus = 'InProgress' AND @NewStatus NOT IN ('Done', 'UnableToLoad', 'Rejected')
+                THROW 50045, 'Lifecycle Transition Violation: In-progress recovery can only transition to Done, UnableToLoad, or Rejected.', 1;
+        END
 
         -- Trigger dbo.trg_TowRequests_ImmutabilityAndAudit blocks updates if already finalized!
         UPDATE dbo.TowRequests
@@ -1536,13 +1597,25 @@ BEGIN
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Dispatch permission is required for this operation.', 1;
+
     BEGIN TRY
         BEGIN TRANSACTION;
+
+        IF EXISTS (
+            SELECT 1 FROM dbo.TowRequests
+            WHERE TowRequestId = @TowRequestId
+              AND Status NOT IN ('Draft', 'PendingInsurance')
+        )
+            THROW 50046, 'Draft Edit Blocked: Only Draft or Pending Insurance tickets can have intake fields edited directly.', 1;
 
         UPDATE dbo.TowRequests
         SET IssueType  = @NewIssueType,
             IssueNotes = @NewIssueNotes
         WHERE TowRequestId = @TowRequestId
+          AND Status IN ('Draft', 'PendingInsurance')
           AND RowVer       = @ExpectedRowVer;
 
         IF @@ROWCOUNT = 0
@@ -1575,6 +1648,10 @@ BEGIN
     DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Dispatch permission is required for this operation.', 1;
 
     BEGIN TRY
         BEGIN TRANSACTION;
@@ -1641,6 +1718,11 @@ BEGIN
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageFleet') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Fleet or Dispatch permission is required to manage active shifts.', 1;
+
     BEGIN TRY
         BEGIN TRANSACTION;
 
@@ -1682,6 +1764,10 @@ BEGIN
     DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageFleet') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Fleet Management permission is required to modify driver or truck configuration.', 1;
 
     UPDATE dbo.Drivers
     SET Phone               = LTRIM(RTRIM(@Phone)),
@@ -1833,6 +1919,11 @@ BEGIN
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageFleet') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Fleet or Dispatch permission is required to manage active shifts.', 1;
+
     UPDATE dbo.DriverTruckAssignments
     SET EndDate = SYSDATETIME(),
         AssignmentNotes = CASE
@@ -1858,6 +1949,11 @@ BEGIN
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManagePolicies') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Dispatch or Policy permission is required to modify customer records.', 1;
+
     UPDATE dbo.Customers
     SET FullName = LTRIM(RTRIM(@FullName)),
         Phone    = LTRIM(RTRIM(@Phone)),
@@ -1882,6 +1978,10 @@ BEGIN
     DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageBilling') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Billing & Tariffs permission is required.', 1;
 
     BEGIN TRY
         BEGIN TRANSACTION;
@@ -1933,6 +2033,11 @@ BEGIN
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManagePolicies') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Dispatch or Policy permission is required to modify customer records.', 1;
+
     INSERT INTO dbo.Customers (FullName, Phone, Email)
     VALUES (@FullName, @Phone, @Email);
 
@@ -1962,6 +2067,10 @@ BEGIN
     DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManagePolicies') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Policy Underwriting permission is required to manage policies and quota tiers.', 1;
 
     BEGIN TRY
         BEGIN TRANSACTION;
@@ -2023,6 +2132,10 @@ BEGIN
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManagePolicies') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Policy Underwriting permission is required to manage policies and quota tiers.', 1;
+
     IF @QuotaTierId IS NOT NULL AND @QuotaTierId > 0
     BEGIN
         UPDATE dbo.PolicyQuotaTiers
@@ -2053,6 +2166,11 @@ BEGIN
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageFleet') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Fleet or Dispatch permission is required to manage active shifts.', 1;
+
     INSERT INTO dbo.PlateCodes (Code, RegionDescription, DisplaySequence, IsActive)
     VALUES (UPPER(LTRIM(RTRIM(@Code))), @RegionDescription, @DisplaySequence, 1);
 END;
@@ -2068,6 +2186,14 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
+    DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
+    IF @CurrentUserId IS NULL
+        THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Dispatch or Administrator permission is required.', 1;
+
     IF @CheckOnly = 1
     BEGIN
         SELECT AllowedTows, UsedTows
@@ -2075,10 +2201,6 @@ BEGIN
         WHERE PolicyId = 2 AND CoverageType = 'Accident';
         RETURN;
     END;
-
-    DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
-    IF @CurrentUserId IS NULL
-        THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
 
     BEGIN TRY
         BEGIN TRANSACTION;
@@ -2157,11 +2279,21 @@ CREATE OR ALTER PROCEDURE dbo.usp_SearchTowRequestsArchive
     @EndDate        DATETIME2(0)  = '2026-11-01T00:00:00',
     @VehiclePlate   VARCHAR(30)   = 'M 100001',
     @MatchMode      VARCHAR(10)   = 'all',
-    @DomainJson     NVARCHAR(MAX) = NULL
+    @DomainJson     NVARCHAR(MAX) = NULL,
+    @Page           INT           = 1,
+    @PageSize       INT           = 50,
+    @TotalMatched   INT           = 0 OUTPUT
 AS
 BEGIN
     SET NOCOUNT ON;
-    SET STATISTICS IO ON;
+
+    IF TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT) IS NULL
+        THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF @Page IS NULL OR @Page < 1 SET @Page = 1;
+    IF @PageSize IS NULL OR @PageSize < 10 SET @PageSize = 50;
+    IF @PageSize > 250 SET @PageSize = 250;
+    DECLARE @Offset INT = (@Page - 1) * @PageSize;
 
     IF @Mode = 'domain' AND @DomainJson IS NOT NULL
     BEGIN
@@ -2171,7 +2303,8 @@ BEGIN
             Field      VARCHAR(40)       NOT NULL,
             Op         VARCHAR(20)       NOT NULL,
             Val        NVARCHAR(120)     NOT NULL,
-            EscapedVal NVARCHAR(360)     NOT NULL
+            EscapedVal NVARCHAR(480)     NOT NULL,
+            IsPreBound BIT               NOT NULL DEFAULT (0)
         );
 
         INSERT INTO @Rules (Field, Op, Val, EscapedVal)
@@ -2179,7 +2312,7 @@ BEGIN
             LTRIM(RTRIM(ISNULL(j.field, ''))),
             LTRIM(RTRIM(ISNULL(j.op, '='))),
             LTRIM(RTRIM(ISNULL(j.val, ''))),
-            REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(j.val, ''))), N'[', N'[[]'), N'%', N'[%]'), N'_', N'[_]')
+            REPLACE(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(j.val, ''))), N'\', N'\\'), N'%', N'\%'), N'_', N'\_'), N'[', N'\[')
         FROM OPENJSON(@DomainJson)
         WITH
         (
@@ -2190,10 +2323,10 @@ BEGIN
         WHERE LEN(LTRIM(RTRIM(ISNULL(j.field, '')))) > 0
           AND LEN(LTRIM(RTRIM(ISNULL(j.val, '')))) > 0;
 
-        DECLARE @RuleCount INT = (SELECT COUNT(*) FROM @Rules);
+        DECLARE @InitialRuleCount INT = (SELECT COUNT(*) FROM @Rules);
         DECLARE @IsAll BIT = CASE WHEN LOWER(ISNULL(@MatchMode, 'all')) = 'any' THEN 0 ELSE 1 END;
 
-        -- Extract SARGable index pre-bounds when MatchMode = 'all' (AND)
+        -- Extract SARGable index pre-bounds when MatchMode = 'all' (AND) and prune covered rules
         DECLARE @BoundStatus      VARCHAR(25)   = NULL,
                 @BoundMinDate     DATETIME2(0)  = NULL,
                 @BoundMaxDateExcl DATETIME2(0)  = NULL,
@@ -2201,52 +2334,165 @@ BEGIN
 
         DECLARE @MatchedVehicles TABLE (VehicleId INT NOT NULL PRIMARY KEY);
 
-        IF @IsAll = 1 AND @RuleCount > 0
+        IF @IsAll = 1 AND @InitialRuleCount > 0
         BEGIN
-            SELECT TOP (1) @BoundStatus = r.Val
+            DECLARE @StatusRuleId INT = NULL, @PlateRuleId INT = NULL;
+
+            SELECT TOP (1) @StatusRuleId = r.RuleId, @BoundStatus = r.Val
             FROM @Rules AS r
             WHERE r.Field = 'status' AND r.Op = '=';
 
+            IF @StatusRuleId IS NOT NULL
+                UPDATE @Rules SET IsPreBound = 1 WHERE RuleId = @StatusRuleId;
+
             SELECT @BoundMinDate = MAX(TRY_CAST(r.Val AS DATETIME2(0)))
             FROM @Rules AS r
-            WHERE r.Field = 'createdAt' AND r.Op IN ('>=', '=')
+            WHERE r.Field = 'createdAt' AND r.Op = '>='
               AND TRY_CAST(r.Val AS DATETIME2(0)) IS NOT NULL;
+
+            IF @BoundMinDate IS NOT NULL
+                UPDATE @Rules SET IsPreBound = 1
+                WHERE Field = 'createdAt' AND Op = '>=' AND TRY_CAST(Val AS DATETIME2(0)) IS NOT NULL;
 
             SELECT @BoundMaxDateExcl = MIN(CAST(DATEADD(DAY, 1, TRY_CAST(r.Val AS DATE)) AS DATETIME2(0)))
             FROM @Rules AS r
-            WHERE r.Field = 'createdAt' AND r.Op IN ('<=', '=')
+            WHERE r.Field = 'createdAt' AND r.Op = '<='
               AND TRY_CAST(r.Val AS DATE) IS NOT NULL;
 
-            IF EXISTS (SELECT 1 FROM @Rules WHERE Field = 'vehiclePlate' AND Op IN ('=', 'starts_with'))
+            IF @BoundMaxDateExcl IS NOT NULL
+                UPDATE @Rules SET IsPreBound = 1
+                WHERE Field = 'createdAt' AND Op = '<=' AND TRY_CAST(Val AS DATE) IS NOT NULL;
+
+            SELECT TOP (1)
+                @PlateRuleId = r.RuleId
+            FROM @Rules AS r
+            WHERE r.Field = 'vehiclePlate' AND r.Op IN ('=', 'starts_with')
+            ORDER BY CASE WHEN r.Op = '=' THEN 0 ELSE 1 END;
+
+            IF @PlateRuleId IS NOT NULL
             BEGIN
                 SET @UsePlatePreSeek = 1;
-                DECLARE @PlateOp VARCHAR(20), @PlateRaw VARCHAR(60), @PlateEsc NVARCHAR(180);
-                SELECT TOP (1)
-                    @PlateOp  = r.Op,
-                    @PlateRaw = LEFT(r.Val, 60),
-                    @PlateEsc = LEFT(r.EscapedVal, 180)
-                FROM @Rules AS r
-                WHERE r.Field = 'vehiclePlate' AND r.Op IN ('=', 'starts_with')
-                ORDER BY CASE WHEN r.Op = '=' THEN 0 ELSE 1 END;
+                DECLARE @PlateOp VARCHAR(20), @PlateRaw VARCHAR(60), @PlateEsc NVARCHAR(240);
+                SELECT @PlateOp = Op, @PlateRaw = LEFT(Val, 60), @PlateEsc = LEFT(EscapedVal, 240)
+                FROM @Rules WHERE RuleId = @PlateRuleId;
 
                 IF @PlateOp = '='
                 BEGIN
                     INSERT INTO @MatchedVehicles (VehicleId)
-                    SELECT v.VehicleId
-                    FROM dbo.Vehicles AS v
+                    SELECT v.VehicleId FROM dbo.Vehicles AS v
                     WHERE v.NoPlate = 0 AND v.VehiclePlate = @PlateRaw;
                 END
                 ELSE
                 BEGIN
                     INSERT INTO @MatchedVehicles (VehicleId)
-                    SELECT v.VehicleId
-                    FROM dbo.Vehicles AS v
-                    WHERE v.NoPlate = 0 AND v.VehiclePlate LIKE @PlateEsc + N'%';
+                    SELECT v.VehicleId FROM dbo.Vehicles AS v
+                    WHERE v.NoPlate = 0 AND v.VehiclePlate LIKE @PlateEsc + N'%' ESCAPE N'\';
                 END;
+
+                UPDATE @Rules SET IsPreBound = 1 WHERE RuleId = @PlateRuleId;
             END;
+
+            DELETE FROM @Rules WHERE IsPreBound = 1;
         END;
 
-        SELECT TOP (50)
+        DECLARE @ResidualCount INT = (SELECT COUNT(*) FROM @Rules);
+
+        -- Fast path: zero residual correlation needed when all AND rules are SARGably pre-bound
+        IF @InitialRuleCount = 0 OR (@IsAll = 1 AND @ResidualCount = 0)
+        BEGIN
+            IF @InitialRuleCount = 0
+            BEGIN
+                SELECT @TotalMatched = CAST(ISNULL(SUM(p.rows), 0) AS INT)
+                FROM sys.partitions AS p
+                WHERE p.object_id = OBJECT_ID(N'dbo.TowRequests') AND p.index_id IN (0, 1);
+            END
+            ELSE
+            BEGIN
+                SELECT @TotalMatched = COUNT(*)
+                FROM dbo.TowRequests AS tr
+                WHERE (@BoundStatus IS NULL OR tr.Status = @BoundStatus)
+                  AND (@BoundMinDate IS NULL OR tr.CreatedAt >= @BoundMinDate)
+                  AND (@BoundMaxDateExcl IS NULL OR tr.CreatedAt < @BoundMaxDateExcl)
+                  AND (@UsePlatePreSeek = 0 OR tr.VehicleId IN (SELECT mv.VehicleId FROM @MatchedVehicles AS mv))
+                OPTION (RECOMPILE);
+            END;
+
+            SELECT
+                tr.TowRequestId,
+                tr.RequestNumber,
+                v.VehiclePlate,
+                v.VehicleModel,
+                tr.IssueType,
+                tr.Status,
+                tr.RouteDistanceKm AS ActualDistanceKm,
+                tr.DistanceSource,
+                inv.CoveredDistanceKm AS AllowedDistanceKm,
+                inv.CustomerBilledAmount AS OverageAmount,
+                inv.InsurerBilledAmount,
+                inv.TotalAmount,
+                inv.InvoiceStatus,
+                tr.CreatedAt
+            FROM dbo.TowRequests AS tr
+            INNER JOIN dbo.Vehicles AS v ON tr.VehicleId = v.VehicleId
+            INNER JOIN dbo.TowInvoices AS inv ON tr.TowRequestId = inv.TowRequestId
+            WHERE (@BoundStatus IS NULL OR tr.Status = @BoundStatus)
+              AND (@BoundMinDate IS NULL OR tr.CreatedAt >= @BoundMinDate)
+              AND (@BoundMaxDateExcl IS NULL OR tr.CreatedAt < @BoundMaxDateExcl)
+              AND (@UsePlatePreSeek = 0 OR tr.VehicleId IN (SELECT mv.VehicleId FROM @MatchedVehicles AS mv))
+            ORDER BY tr.CreatedAt DESC, tr.TowRequestId DESC
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+            OPTION (RECOMPILE);
+
+            RETURN;
+        END
+        ELSE
+        BEGIN
+            SELECT @TotalMatched = COUNT(*)
+            FROM dbo.TowRequests AS tr
+            INNER JOIN dbo.Vehicles AS v ON tr.VehicleId = v.VehicleId
+            INNER JOIN dbo.TowInvoices AS inv ON tr.TowRequestId = inv.TowRequestId
+            WHERE (@BoundStatus IS NULL OR tr.Status = @BoundStatus)
+              AND (@BoundMinDate IS NULL OR tr.CreatedAt >= @BoundMinDate)
+              AND (@BoundMaxDateExcl IS NULL OR tr.CreatedAt < @BoundMaxDateExcl)
+              AND (@UsePlatePreSeek = 0 OR tr.VehicleId IN (SELECT mv.VehicleId FROM @MatchedVehicles AS mv))
+              AND (
+                  SELECT COUNT(*)
+                  FROM @Rules AS r
+                  WHERE (r.Field = 'vehiclePlate' AND (
+                            (r.Op = '='           AND v.VehiclePlate = r.Val) OR
+                            (r.Op = '!='          AND v.VehiclePlate <> r.Val) OR
+                            (r.Op = 'starts_with' AND v.VehiclePlate LIKE r.EscapedVal + N'%' ESCAPE N'\') OR
+                            (r.Op = 'contains'    AND v.VehiclePlate LIKE N'%' + r.EscapedVal + N'%' ESCAPE N'\')
+                        ))
+                     OR (r.Field = 'status' AND ((r.Op = '=' AND tr.Status = r.Val) OR (r.Op = '!=' AND tr.Status <> r.Val)))
+                     OR (r.Field = 'createdAt' AND (
+                            (r.Op = '>=' AND TRY_CAST(r.Val AS DATETIME2(0)) IS NOT NULL AND tr.CreatedAt >= TRY_CAST(r.Val AS DATETIME2(0))) OR
+                            (r.Op = '<=' AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND tr.CreatedAt < DATEADD(DAY, 1, TRY_CAST(r.Val AS DATE))) OR
+                            (r.Op = '='  AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND CAST(tr.CreatedAt AS DATE) = TRY_CAST(r.Val AS DATE))
+                        ))
+                     OR (r.Field = 'issueType' AND ((r.Op = '=' AND tr.IssueType = r.Val) OR (r.Op = '!=' AND tr.IssueType <> r.Val)))
+                     OR (r.Field = 'requestNumber' AND (
+                            (r.Op = '='           AND tr.RequestNumber = r.Val) OR
+                            (r.Op = '!='          AND tr.RequestNumber <> r.Val) OR
+                            (r.Op = 'starts_with' AND tr.RequestNumber LIKE r.EscapedVal + N'%' ESCAPE N'\') OR
+                            (r.Op = 'contains'    AND tr.RequestNumber LIKE N'%' + r.EscapedVal + N'%' ESCAPE N'\')
+                        ))
+                     OR (r.Field = 'invoiceStatus' AND ((r.Op = '=' AND inv.InvoiceStatus = r.Val) OR (r.Op = '!=' AND inv.InvoiceStatus <> r.Val)))
+                     OR (r.Field = 'policyId' AND TRY_CAST(r.Val AS INT) IS NOT NULL AND (
+                            (r.Op = '='  AND tr.PolicyId = TRY_CAST(r.Val AS INT)) OR
+                            (r.Op = '>=' AND tr.PolicyId >= TRY_CAST(r.Val AS INT)) OR
+                            (r.Op = '<=' AND tr.PolicyId <= TRY_CAST(r.Val AS INT))
+                        ))
+                     OR (r.Field = 'distanceKm' AND TRY_CAST(r.Val AS DECIMAL(8,2)) IS NOT NULL AND (
+                            (r.Op = '='  AND tr.RouteDistanceKm = TRY_CAST(r.Val AS DECIMAL(8,2))) OR
+                            (r.Op = '>=' AND tr.RouteDistanceKm >= TRY_CAST(r.Val AS DECIMAL(8,2))) OR
+                            (r.Op = '<=' AND tr.RouteDistanceKm <= TRY_CAST(r.Val AS DECIMAL(8,2)))
+                        ))
+              ) >= CASE WHEN @IsAll = 1 THEN @ResidualCount ELSE 1 END
+            OPTION (RECOMPILE);
+        END;
+
+        SELECT
             tr.TowRequestId,
             tr.RequestNumber,
             v.VehiclePlate,
@@ -2269,107 +2515,46 @@ BEGIN
           AND (@BoundMaxDateExcl IS NULL OR tr.CreatedAt < @BoundMaxDateExcl)
           AND (@UsePlatePreSeek = 0 OR tr.VehicleId IN (SELECT mv.VehicleId FROM @MatchedVehicles AS mv))
           AND (
-              @RuleCount = 0
+              @ResidualCount = 0
               OR (
-                  @IsAll = 1
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM @Rules AS r
-                      WHERE NOT (
-                          (r.Field = 'vehiclePlate' AND (
-                              (r.Op = '='           AND v.VehiclePlate = r.Val) OR
-                              (r.Op = '!='          AND v.VehiclePlate <> r.Val) OR
-                              (r.Op = 'starts_with' AND v.VehiclePlate LIKE r.EscapedVal + N'%') OR
-                              (r.Op = 'contains'    AND v.VehiclePlate LIKE N'%' + r.EscapedVal + N'%')
-                          ))
-                          OR (r.Field = 'status' AND (
-                              (r.Op = '='  AND tr.Status = r.Val) OR
-                              (r.Op = '!=' AND tr.Status <> r.Val)
-                          ))
-                          OR (r.Field = 'createdAt' AND (
-                              (r.Op = '>=' AND TRY_CAST(r.Val AS DATETIME2(0)) IS NOT NULL AND tr.CreatedAt >= TRY_CAST(r.Val AS DATETIME2(0))) OR
-                              (r.Op = '<=' AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND tr.CreatedAt < DATEADD(DAY, 1, TRY_CAST(r.Val AS DATE))) OR
-                              (r.Op = '='  AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND CAST(tr.CreatedAt AS DATE) = TRY_CAST(r.Val AS DATE))
-                          ))
-                          OR (r.Field = 'issueType' AND (
-                              (r.Op = '='  AND tr.IssueType = r.Val) OR
-                              (r.Op = '!=' AND tr.IssueType <> r.Val)
-                          ))
-                          OR (r.Field = 'requestNumber' AND (
-                              (r.Op = '='           AND tr.RequestNumber = r.Val) OR
-                              (r.Op = '!='          AND tr.RequestNumber <> r.Val) OR
-                              (r.Op = 'starts_with' AND tr.RequestNumber LIKE r.EscapedVal + N'%') OR
-                              (r.Op = 'contains'    AND tr.RequestNumber LIKE N'%' + r.EscapedVal + N'%')
-                          ))
-                          OR (r.Field = 'invoiceStatus' AND (
-                              (r.Op = '='  AND inv.InvoiceStatus = r.Val) OR
-                              (r.Op = '!=' AND inv.InvoiceStatus <> r.Val)
-                          ))
-                          OR (r.Field = 'policyId' AND TRY_CAST(r.Val AS INT) IS NOT NULL AND (
-                              (r.Op = '='  AND tr.PolicyId = TRY_CAST(r.Val AS INT)) OR
-                              (r.Op = '>=' AND tr.PolicyId >= TRY_CAST(r.Val AS INT)) OR
-                              (r.Op = '<=' AND tr.PolicyId <= TRY_CAST(r.Val AS INT))
-                          ))
-                          OR (r.Field = 'distanceKm' AND TRY_CAST(r.Val AS DECIMAL(8,2)) IS NOT NULL AND (
-                              (r.Op = '='  AND tr.RouteDistanceKm = TRY_CAST(r.Val AS DECIMAL(8,2))) OR
-                              (r.Op = '>=' AND tr.RouteDistanceKm >= TRY_CAST(r.Val AS DECIMAL(8,2))) OR
-                              (r.Op = '<=' AND tr.RouteDistanceKm <= TRY_CAST(r.Val AS DECIMAL(8,2)))
-                          ))
-                      )
-                  )
-              )
-              OR (
-                  @IsAll = 0
-                  AND EXISTS (
-                      SELECT 1
-                      FROM @Rules AS r
-                      WHERE (
-                          (r.Field = 'vehiclePlate' AND (
-                              (r.Op = '='           AND v.VehiclePlate = r.Val) OR
-                              (r.Op = '!='          AND v.VehiclePlate <> r.Val) OR
-                              (r.Op = 'starts_with' AND v.VehiclePlate LIKE r.EscapedVal + N'%') OR
-                              (r.Op = 'contains'    AND v.VehiclePlate LIKE N'%' + r.EscapedVal + N'%')
-                          ))
-                          OR (r.Field = 'status' AND (
-                              (r.Op = '='  AND tr.Status = r.Val) OR
-                              (r.Op = '!=' AND tr.Status <> r.Val)
-                          ))
-                          OR (r.Field = 'createdAt' AND (
-                              (r.Op = '>=' AND TRY_CAST(r.Val AS DATETIME2(0)) IS NOT NULL AND tr.CreatedAt >= TRY_CAST(r.Val AS DATETIME2(0))) OR
-                              (r.Op = '<=' AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND tr.CreatedAt < DATEADD(DAY, 1, TRY_CAST(r.Val AS DATE))) OR
-                              (r.Op = '='  AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND CAST(tr.CreatedAt AS DATE) = TRY_CAST(r.Val AS DATE))
-                          ))
-                          OR (r.Field = 'issueType' AND (
-                              (r.Op = '='  AND tr.IssueType = r.Val) OR
-                              (r.Op = '!=' AND tr.IssueType <> r.Val)
-                          ))
-                          OR (r.Field = 'requestNumber' AND (
-                              (r.Op = '='           AND tr.RequestNumber = r.Val) OR
-                              (r.Op = '!='          AND tr.RequestNumber <> r.Val) OR
-                              (r.Op = 'starts_with' AND tr.RequestNumber LIKE r.EscapedVal + N'%') OR
-                              (r.Op = 'contains'    AND tr.RequestNumber LIKE N'%' + r.EscapedVal + N'%')
-                          ))
-                          OR (r.Field = 'invoiceStatus' AND (
-                              (r.Op = '='  AND inv.InvoiceStatus = r.Val) OR
-                              (r.Op = '!=' AND inv.InvoiceStatus <> r.Val)
-                          ))
-                          OR (r.Field = 'policyId' AND TRY_CAST(r.Val AS INT) IS NOT NULL AND (
-                              (r.Op = '='  AND tr.PolicyId = TRY_CAST(r.Val AS INT)) OR
-                              (r.Op = '>=' AND tr.PolicyId >= TRY_CAST(r.Val AS INT)) OR
-                              (r.Op = '<=' AND tr.PolicyId <= TRY_CAST(r.Val AS INT))
-                          ))
-                          OR (r.Field = 'distanceKm' AND TRY_CAST(r.Val AS DECIMAL(8,2)) IS NOT NULL AND (
-                              (r.Op = '='  AND tr.RouteDistanceKm = TRY_CAST(r.Val AS DECIMAL(8,2))) OR
-                              (r.Op = '>=' AND tr.RouteDistanceKm >= TRY_CAST(r.Val AS DECIMAL(8,2))) OR
-                              (r.Op = '<=' AND tr.RouteDistanceKm <= TRY_CAST(r.Val AS DECIMAL(8,2)))
-                          ))
-                      )
-                  )
-              )
+                  SELECT COUNT(*)
+                  FROM @Rules AS r
+                  WHERE (r.Field = 'vehiclePlate' AND (
+                            (r.Op = '='           AND v.VehiclePlate = r.Val) OR
+                            (r.Op = '!='          AND v.VehiclePlate <> r.Val) OR
+                            (r.Op = 'starts_with' AND v.VehiclePlate LIKE r.EscapedVal + N'%' ESCAPE N'\') OR
+                            (r.Op = 'contains'    AND v.VehiclePlate LIKE N'%' + r.EscapedVal + N'%' ESCAPE N'\')
+                        ))
+                     OR (r.Field = 'status' AND ((r.Op = '=' AND tr.Status = r.Val) OR (r.Op = '!=' AND tr.Status <> r.Val)))
+                     OR (r.Field = 'createdAt' AND (
+                            (r.Op = '>=' AND TRY_CAST(r.Val AS DATETIME2(0)) IS NOT NULL AND tr.CreatedAt >= TRY_CAST(r.Val AS DATETIME2(0))) OR
+                            (r.Op = '<=' AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND tr.CreatedAt < DATEADD(DAY, 1, TRY_CAST(r.Val AS DATE))) OR
+                            (r.Op = '='  AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND CAST(tr.CreatedAt AS DATE) = TRY_CAST(r.Val AS DATE))
+                        ))
+                     OR (r.Field = 'issueType' AND ((r.Op = '=' AND tr.IssueType = r.Val) OR (r.Op = '!=' AND tr.IssueType <> r.Val)))
+                     OR (r.Field = 'requestNumber' AND (
+                            (r.Op = '='           AND tr.RequestNumber = r.Val) OR
+                            (r.Op = '!='          AND tr.RequestNumber <> r.Val) OR
+                            (r.Op = 'starts_with' AND tr.RequestNumber LIKE r.EscapedVal + N'%' ESCAPE N'\') OR
+                            (r.Op = 'contains'    AND tr.RequestNumber LIKE N'%' + r.EscapedVal + N'%' ESCAPE N'\')
+                        ))
+                     OR (r.Field = 'invoiceStatus' AND ((r.Op = '=' AND inv.InvoiceStatus = r.Val) OR (r.Op = '!=' AND inv.InvoiceStatus <> r.Val)))
+                     OR (r.Field = 'policyId' AND TRY_CAST(r.Val AS INT) IS NOT NULL AND (
+                            (r.Op = '='  AND tr.PolicyId = TRY_CAST(r.Val AS INT)) OR
+                            (r.Op = '>=' AND tr.PolicyId >= TRY_CAST(r.Val AS INT)) OR
+                            (r.Op = '<=' AND tr.PolicyId <= TRY_CAST(r.Val AS INT))
+                        ))
+                     OR (r.Field = 'distanceKm' AND TRY_CAST(r.Val AS DECIMAL(8,2)) IS NOT NULL AND (
+                            (r.Op = '='  AND tr.RouteDistanceKm = TRY_CAST(r.Val AS DECIMAL(8,2))) OR
+                            (r.Op = '>=' AND tr.RouteDistanceKm >= TRY_CAST(r.Val AS DECIMAL(8,2))) OR
+                            (r.Op = '<=' AND tr.RouteDistanceKm <= TRY_CAST(r.Val AS DECIMAL(8,2)))
+                        ))
+              ) >= CASE WHEN @IsAll = 1 THEN @ResidualCount ELSE 1 END
           )
-        ORDER BY tr.CreatedAt DESC;
+        ORDER BY tr.CreatedAt DESC, tr.TowRequestId DESC
+        OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+        OPTION (RECOMPILE);
 
-        SET STATISTICS IO OFF;
         RETURN;
     END;
 
@@ -2452,8 +2637,6 @@ BEGIN
           AND tr.CreatedAt < @EndDate
         ORDER BY tr.CreatedAt DESC;
     END;
-
-    SET STATISTICS IO OFF;
 END;
 GO
 
@@ -2467,16 +2650,34 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    IF TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT) IS NULL
+        THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    DECLARE @UnpaidInsurer  DECIMAL(12,2) = 0.00,
+            @UnpaidCustomer DECIMAL(12,2) = 0.00,
+            @FastTotalTows  BIGINT        = 0;
+
+    SELECT
+        @UnpaidInsurer  = ISNULL(SUM(InsurerBilledAmount - InsurerPaidAmount), 0.00),
+        @UnpaidCustomer = ISNULL(SUM(CustomerBilledAmount - CustomerPaidAmount), 0.00)
+    FROM dbo.TowInvoices
+    WHERE InvoiceStatus IN ('Unpaid', 'PartiallyPaid');
+
+    SELECT @FastTotalTows = ISNULL(SUM(p.rows), 0)
+    FROM sys.partitions AS p
+    WHERE p.object_id = OBJECT_ID(N'dbo.TowRequests')
+      AND p.index_id IN (0, 1);
+
     -- Result Set 1: KPIs + Least-Privilege & SESSION_CONTEXT Diagnostics
     SELECT
-        (SELECT COUNT(*) FROM dbo.TowRequests) AS TotalTowRequests,
+        CAST(@FastTotalTows AS INT) AS TotalTowRequests,
         (SELECT COUNT(*) FROM dbo.TowRequests WHERE Status IN ('Approved', 'InProgress')) AS ActiveDispatches,
         (SELECT COUNT(*) FROM dbo.TowRequests WHERE Status IN ('Draft', 'PendingInsurance')) AS PendingDrafts,
         (SELECT COUNT(*) FROM dbo.TowTrucks WHERE FleetStatus = 'Available') AS AvailableTrucks,
         (SELECT COUNT(*) FROM dbo.InsurancePolicies WHERE PolicyStatus = 'Active') AS ActivePolicies,
         (SELECT COUNT(*) FROM dbo.TowAuditLogs) AS TotalAuditLogs,
-        ISNULL((SELECT SUM(InsurerBilledAmount - InsurerPaidAmount) FROM dbo.TowInvoices WHERE InvoiceStatus IN ('Unpaid', 'PartiallyPaid')), 0.00) AS UnpaidInsurerBalance,
-        ISNULL((SELECT SUM(CustomerBilledAmount - CustomerPaidAmount) FROM dbo.TowInvoices WHERE InvoiceStatus IN ('Unpaid', 'PartiallyPaid')), 0.00) AS UnpaidCustomerBalance,
+        @UnpaidInsurer AS UnpaidInsurerBalance,
+        @UnpaidCustomer AS UnpaidCustomerBalance,
         SUSER_SNAME() AS ConnectedSqlLogin,
         USER_NAME() AS ConnectedDatabaseUser,
         IS_ROLEMEMBER('db_tow_dispatcher_role') AS IsLeastPrivilegeRoleMember,
@@ -2564,7 +2765,7 @@ BEGIN
         t.CurrentLat, t.CurrentLng, t.SpeedKmh, t.FleetStatus, t.LastTelemetryAt,
         dta.DriverId,
         ISNULL(d.FullName, N'Unassigned') AS DriverName,
-        ISNULL(d.Phone, '—') AS DriverPhone,
+        ISNULL(d.Phone, N'—') AS DriverPhone,
         ISNULL(d.BaseMonthlySalary, 0.00) AS BaseMonthlySalary,
         ISNULL(d.OvertimeRatePerTow, 0.00) AS OvertimeRatePerTow,
         ISNULL(d.IsWorkingOffDay, 0) AS IsWorkingOffDay
@@ -2706,6 +2907,9 @@ BEGIN
     DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
     IF @CurrentUserId IS NULL
         THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50032, 'Access Denied: Administrator permission is required to view or manage user groups.', 1;
 
     SELECT
         ug.GroupId,
@@ -2854,6 +3058,20 @@ BEGIN
     IF ISNULL(@IsAdmin, 0) = 0
         THROW 50032, 'Access Denied: Administrator permission (CanManageUsers = 1) is required to view and manage system users.', 1;
 
+    WITH UserTowCounts AS
+    (
+        SELECT CreatedByUserId, COUNT(*) AS Cnt
+        FROM dbo.TowRequests
+        WHERE CreatedByUserId IS NOT NULL
+        GROUP BY CreatedByUserId
+    ),
+    UserAuditCounts AS
+    (
+        SELECT DispatcherUserId, COUNT(*) AS Cnt
+        FROM dbo.TowAuditLogs
+        WHERE DispatcherUserId IS NOT NULL
+        GROUP BY DispatcherUserId
+    )
     SELECT
         u.UserId,
         u.Username,
@@ -2869,13 +3087,15 @@ BEGIN
         ug.CanManageBilling,
         ug.CanManageUsers,
         u.LastLoginAt,
-        (SELECT COUNT(*) FROM dbo.TowRequests AS tr WHERE tr.CreatedByUserId = u.UserId) AS CreatedTowCount,
-        (SELECT COUNT(*) FROM dbo.TowAuditLogs AS al WHERE al.DispatcherUserId = u.UserId) AS AuditActionCount,
+        ISNULL(utc.Cnt, 0) AS CreatedTowCount,
+        ISNULL(uac.Cnt, 0) AS AuditActionCount,
         u.GroupId,
         ug.GroupCode,
         ug.GroupName
     FROM dbo.SystemUsers AS u
     INNER JOIN dbo.UserGroups AS ug ON u.GroupId = ug.GroupId
+    LEFT JOIN UserTowCounts AS utc ON u.UserId = utc.CreatedByUserId
+    LEFT JOIN UserAuditCounts AS uac ON u.UserId = uac.DispatcherUserId
     ORDER BY u.UserId ASC;
 END;
 GO
@@ -3950,18 +4170,25 @@ BEGIN
 
     IF @EntityType IS NOT NULL AND @EntityId IS NOT NULL
     BEGIN
-        DECLARE @LookupCode VARCHAR(100) = NULL;
+        DECLARE @LookupCode VARCHAR(100) = NULL,
+                @EscapedLookupCode VARCHAR(400) = NULL;
         IF @EntityType = 'TowInvoices'
             SELECT @LookupCode = InvoiceNumber FROM dbo.TowInvoices WHERE InvoiceId = @EntityId;
         ELSE IF @EntityType = 'InsurancePolicies'
             SELECT @LookupCode = PolicyNumber FROM dbo.InsurancePolicies WHERE PolicyId = @EntityId;
 
+        IF @LookupCode IS NOT NULL
+            SET @EscapedLookupCode = REPLACE(REPLACE(REPLACE(REPLACE(@LookupCode, '\', '\\'), '%', '\%'), '_', '\_'), '[', '\[');
+
         INSERT INTO @SelectedEvents (ChangeEventId)
         SELECT TOP (@TopN) e.ChangeEventId
         FROM dbo.AuditChangeEvents AS e
-        WHERE (e.EntityType = @EntityType AND e.EntityId = @EntityId)
-           OR (@EntityType = 'TowInvoices' AND @LookupCode IS NOT NULL AND e.EntityType = 'InvoicePayments' AND e.EntityCode = @LookupCode)
-           OR (@EntityType = 'InsurancePolicies' AND @LookupCode IS NOT NULL AND e.EntityType = 'PolicyQuotaTiers' AND e.EntityCode LIKE @LookupCode + '%')
+        WHERE (@EntityType NOT IN ('SystemUsers', 'UserGroups') OR ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 1)
+          AND (
+               (e.EntityType = @EntityType AND e.EntityId = @EntityId)
+            OR (@EntityType = 'TowInvoices' AND @LookupCode IS NOT NULL AND e.EntityType = 'InvoicePayments' AND e.EntityCode = @LookupCode)
+            OR (@EntityType = 'InsurancePolicies' AND @EscapedLookupCode IS NOT NULL AND e.EntityType = 'PolicyQuotaTiers' AND e.EntityCode LIKE @EscapedLookupCode + '%' ESCAPE '\')
+          )
         ORDER BY e.ChangeEventId DESC;
     END
     ELSE
@@ -3969,8 +4196,8 @@ BEGIN
         INSERT INTO @SelectedEvents (ChangeEventId)
         SELECT TOP (@TopN) e.ChangeEventId
         FROM dbo.AuditChangeEvents AS e
-        WHERE (@SectionScope = 'users'       AND e.EntityType = 'SystemUsers')
-           OR (@SectionScope = 'groups'      AND e.EntityType = 'UserGroups')
+        WHERE (@SectionScope = 'users'       AND e.EntityType = 'SystemUsers' AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 1)
+           OR (@SectionScope = 'groups'      AND e.EntityType = 'UserGroups'  AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 1)
            OR (@SectionScope = 'trucks'      AND e.EntityType = 'TowTrucks')
            OR (@SectionScope = 'drivers'     AND e.EntityType = 'Drivers')
            OR (@SectionScope = 'customers'   AND e.EntityType = 'Customers')

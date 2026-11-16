@@ -715,5 +715,17 @@ ON dbo.AuditChangeDetails (ChangeEventId ASC)
 INCLUDE (FieldName, OldValue, NewValue);
 GO
 
-PRINT '01_create_schema_and_indexes.sql completed successfully (18 normalized 3NF tables).';
+-- Filtered covering indexes for instant KPI unpaid balance rollups & per-operator ticket counts
+CREATE NONCLUSTERED INDEX IX_TowInvoices_UnpaidBalances
+ON dbo.TowInvoices (InvoiceStatus ASC)
+INCLUDE (InsurerBilledAmount, InsurerPaidAmount, CustomerBilledAmount, CustomerPaidAmount)
+WHERE InvoiceStatus IN ('Unpaid', 'PartiallyPaid');
+GO
+
+CREATE NONCLUSTERED INDEX IX_TowRequests_CreatedByUserId
+ON dbo.TowRequests (CreatedByUserId ASC)
+WHERE CreatedByUserId IS NOT NULL;
+GO
+
+PRINT '01_create_schema_and_indexes.sql completed successfully (19 normalized 3NF tables).';
 GO

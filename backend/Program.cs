@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics;
 using System.Security.Cryptography;
@@ -8,17 +9,27 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Data.SqlClient;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 64 * 1024; // 64 KB upper bound on JSON API payloads
+});
 
 // 1. Load .env file if present so no database password is ever hardcoded in C# source code
 LoadDotEnv(Path.Combine(builder.Environment.ContentRootPath, ".env"));
 
 string connectionString = Environment.GetEnvironmentVariable("TOW_DB_CONNECTION_STRING")
-    ?? "Server=localhost;Database=GIN401_TowDispatch;Integrated Security=True;TrustServerCertificate=True;";
+    ?? "Server=localhost;Database=GIN401_TowDispatch;Integrated Security=True;Pooling=False;TrustServerCertificate=True;";
 
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
-        policy.WithOrigins("http://localhost:5173", "http://127.0.0.1:5173")
+        policy.SetIsOriginAllowed(origin =>
+              {
+                  if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
+                  return (uri.Scheme == "http" || uri.Scheme == "https") &&
+                         (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                          uri.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase));
+              })
               .AllowAnyHeader()
               .AllowAnyMethod());
 });
@@ -26,18 +37,36 @@ builder.Services.AddCors(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.AddFixedWindowLimiter("login", limiter =>
+    // Partitioned per-IP login limiter (prevents a single IP from locking out all dispatch workstations)
+    options.AddPolicy("login", httpContext =>
     {
-        limiter.PermitLimit = 10;
-        limiter.Window = TimeSpan.FromMinutes(1);
-        limiter.QueueLimit = 0;
-        limiter.AutoReplenishment = true;
+        string partitionKey = httpContext.Connection.RemoteIpAddress?.ToString() ?? "local";
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 12,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
+    });
+    // Partitioned per-operator limiter for lock/CPU-intensive operations
+    options.AddPolicy("ops-heavy", httpContext =>
+    {
+        string partitionKey = httpContext.Items["OperatorUsername"] as string
+            ?? httpContext.Connection.RemoteIpAddress?.ToString()
+            ?? "anon";
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 15,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
     });
 });
 
 var app = builder.Build();
 app.UseCors();
-app.UseRateLimiter();
 app.Use(async (context, next) =>
 {
     context.Response.OnStarting(() =>
@@ -47,10 +76,15 @@ app.Use(async (context, next) =>
         context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
         context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
         context.Response.Headers["Content-Security-Policy"] =
-            "default-src 'self'; img-src 'self' data: https://mt1.google.com; " +
+            "default-src 'self'; object-src 'none'; img-src 'self' data: https://mt1.google.com; " +
             "style-src 'self' 'unsafe-inline'; script-src 'self'; " +
             "connect-src 'self' https://api.bigdatacloud.net https://nominatim.openstreetmap.org https://photon.komoot.io https://router.project-osrm.org; " +
             "frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+        if (context.Request.Path.StartsWithSegments("/api"))
+        {
+            context.Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+            context.Response.Headers["Pragma"] = "no-cache";
+        }
         return Task.CompletedTask;
     });
     await next();
@@ -59,89 +93,207 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 string? configuredTokenSecret = Environment.GetEnvironmentVariable("TRACKER_TOKEN_SECRET");
-if (string.IsNullOrWhiteSpace(configuredTokenSecret))
+if (string.IsNullOrWhiteSpace(configuredTokenSecret) ||
+    configuredTokenSecret.Length < 32 ||
+    configuredTokenSecret.Contains("REPLACE_WITH", StringComparison.OrdinalIgnoreCase))
 {
     configuredTokenSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-    app.Logger.LogWarning("TRACKER_TOKEN_SECRET is not configured; using an ephemeral key for this process. Existing sessions will expire after restart.");
+    app.Logger.LogWarning("TRACKER_TOKEN_SECRET is missing or weak; generated a 256-bit ephemeral signing key for this process.");
 }
 byte[] tokenSecret = Encoding.UTF8.GetBytes(configuredTokenSecret);
 
-// Authenticate every /api/* request (except /api/auth/login) and extract OperatorUserId + OperatorUsername
+var revokedTokenJtis = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
+var userRevokedBeforeUnix = new ConcurrentDictionary<int, long>();
+
+void PruneExpiredRevocations()
+{
+    long nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    foreach (var kv in revokedTokenJtis)
+    {
+        if (kv.Value < nowUnix)
+        {
+            revokedTokenJtis.TryRemove(kv.Key, out _);
+        }
+    }
+}
+
+IResult MapSqlExceptionResult(SqlException ex)
+{
+    if (ex.Number is 50030 or 50031)
+    {
+        return Results.Json(new { success = false, error = "Operator session is invalid or inactive. Please sign in again." }, statusCode: StatusCodes.Status401Unauthorized);
+    }
+    if (ex.Number is 50032 or 50060)
+    {
+        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
+    }
+    if (ex.Number >= 50000 && ex.Number <= 50999)
+    {
+        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+    }
+    if (ex.Number is 2627 or 2601)
+    {
+        return Results.Conflict(new { success = false, error = "A record with this unique identifier or code already exists." });
+    }
+    if (ex.Number == 547)
+    {
+        return Results.BadRequest(new { success = false, error = "The submitted values violate a database validation or reference constraint." });
+    }
+
+    app.Logger.LogError(ex, "Unhandled database error (SqlErrorNumber={SqlErrorNumber})", ex.Number);
+    return Results.Json(
+        new { success = false, error = "An internal database error occurred while processing the request." },
+        statusCode: StatusCodes.Status500InternalServerError);
+}
+
+// Global API Auth & Exception Boundary Middleware
 app.Use(async (context, next) =>
 {
-    if (!context.Request.Path.StartsWithSegments("/api") ||
-        context.Request.Path.StartsWithSegments("/api/auth/login") ||
-        HttpMethods.IsOptions(context.Request.Method))
+    if (!context.Request.Path.StartsWithSegments("/api"))
     {
         await next();
         return;
     }
 
-    string authHeader = context.Request.Headers.Authorization.ToString();
-    string token = authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-        ? authHeader[7..].Trim()
-        : "";
-
-    if (!TryValidateSessionToken(token, tokenSecret, out int userId, out string username))
+    try
     {
-        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        await context.Response.WriteAsJsonAsync(new { success = false, error = "A valid authenticated operator session is required." });
-        return;
+        if (!context.Request.Path.StartsWithSegments("/api/auth/login") &&
+            !HttpMethods.IsOptions(context.Request.Method))
+        {
+            string authHeader = context.Request.Headers.Authorization.ToString();
+            string token = authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                ? authHeader[7..].Trim()
+                : "";
+
+            if (!TryValidateSessionToken(
+                    token,
+                    tokenSecret,
+                    revokedTokenJtis,
+                    userRevokedBeforeUnix,
+                    out int userId,
+                    out string username,
+                    out string tokenJti,
+                    out long tokenExp))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await context.Response.WriteAsJsonAsync(new { success = false, error = "A valid authenticated operator session is required." });
+                return;
+            }
+
+            context.Items["OperatorUserId"] = userId;
+            context.Items["OperatorUsername"] = username;
+            context.Items["OperatorTokenJti"] = tokenJti;
+            context.Items["OperatorTokenExp"] = tokenExp;
+        }
+
+        await next();
     }
-
-    context.Items["OperatorUserId"] = userId;
-    context.Items["OperatorUsername"] = username;
-    await next();
+    catch (UnauthorizedAccessException)
+    {
+        if (!context.Response.HasStarted)
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsJsonAsync(new { success = false, error = "Operator session is invalid or inactive." });
+        }
+    }
+    catch (SqlException ex)
+    {
+        if (!context.Response.HasStarted)
+        {
+            await MapSqlExceptionResult(ex).ExecuteAsync(context);
+        }
+    }
 });
+app.UseRateLimiter();
 
-bool useIntegratedFallback = false;
+int useIntegratedFallbackFlag = 0;
+bool configuredUsesIntegrated =
+    connectionString.Contains("Integrated Security=True", StringComparison.OrdinalIgnoreCase) ||
+    connectionString.Contains("Integrated Security=SSPI", StringComparison.OrdinalIgnoreCase) ||
+    connectionString.Contains("Trusted_Connection=True", StringComparison.OrdinalIgnoreCase);
+
 var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("GIN401TowDispatch/2.0");
+httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("TrackerConnectCAD/2.0");
+
+async Task EnforceLeastPrivilegeOnIntegratedConnectionAsync(SqlConnection winConn)
+{
+    const string sql = @"
+        IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'tow_cad_app_login')
+           AND SUSER_SNAME() <> N'tow_cad_app_login'
+        BEGIN
+            EXECUTE AS LOGIN = N'tow_cad_app_login';
+        END;
+        SELECT IS_SRVROLEMEMBER('sysadmin'), IS_ROLEMEMBER('db_tow_dispatcher_role');";
+
+    await using var impCmd = new SqlCommand(sql, winConn);
+    await using var r = await impCmd.ExecuteReaderAsync();
+    if (!await r.ReadAsync() || r.GetInt32(0) == 1 || r.GetInt32(1) != 1)
+    {
+        throw new InvalidOperationException("Least-privilege SQL role verification failed: refusing to execute under sysadmin or non-dispatcher principal.");
+    }
+}
 
 // Opens a raw least-privilege SQL connection as [tow_cad_app_login] -> [tow_cad_app_user] in [db_tow_dispatcher_role]
-// (EXECUTE permissions ONLY on authorized dbo.usp_* stored procedures; zero direct table permissions)
 async Task<SqlConnection> OpenRawLeastPrivilegeConnectionAsync()
 {
-    if (!useIntegratedFallback)
+    if (!configuredUsesIntegrated && Volatile.Read(ref useIntegratedFallbackFlag) == 0)
     {
+        var conn = new SqlConnection(connectionString);
         try
         {
-            var conn = new SqlConnection(connectionString);
             await conn.OpenAsync();
             return conn;
         }
-        catch (SqlException ex) when (ex.Number == 18456 || ex.Number == 233)
+        catch (SqlException ex) when (ex.Number == 18456)
         {
-            useIntegratedFallback = true;
+            await conn.DisposeAsync();
+            Interlocked.Exchange(ref useIntegratedFallbackFlag, 1);
+            app.Logger.LogWarning("SQL login authentication failed (18456); switching to Integrated Security + mandatory EXECUTE AS LOGIN = 'tow_cad_app_login'.");
+        }
+        catch
+        {
+            await conn.DisposeAsync();
+            throw;
         }
     }
 
     var winConn = new SqlConnection("Server=localhost;Database=GIN401_TowDispatch;Integrated Security=True;Pooling=False;TrustServerCertificate=True;");
-    await winConn.OpenAsync();
-    await using (var impCmd = new SqlCommand(
-        "IF IS_SRVROLEMEMBER('sysadmin') = 1 AND EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'tow_cad_app_login') EXECUTE AS LOGIN = N'tow_cad_app_login';",
-        winConn))
+    try
     {
-        await impCmd.ExecuteNonQueryAsync();
+        await winConn.OpenAsync();
+        await EnforceLeastPrivilegeOnIntegratedConnectionAsync(winConn);
+        return winConn;
     }
-    return winConn;
+    catch
+    {
+        await winConn.DisposeAsync();
+        throw;
+    }
 }
 
 // Opens a connection for unauthenticated login lookup, clearing any prior SESSION_CONTEXT first
 async Task<SqlConnection> OpenAnonymousAuthConnectionAsync()
 {
     var conn = await OpenRawLeastPrivilegeConnectionAsync();
-    await using var clearCmd = new SqlCommand("dbo.usp_ClearDispatcherSessionContext", conn)
+    try
     {
-        CommandType = CommandType.StoredProcedure
-    };
-    await clearCmd.ExecuteNonQueryAsync();
-    return conn;
+        await using var clearCmd = new SqlCommand("dbo.usp_ClearDispatcherSessionContext", conn)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
+        await clearCmd.ExecuteNonQueryAsync();
+        return conn;
+    }
+    catch
+    {
+        await conn.DisposeAsync();
+        throw;
+    }
 }
 
-// Sets AND validates SQL Server SESSION_CONTEXT (AppUserId, AppUsername, AppFullName) on each database connection
-// so audit triggers (dbo.trg_TowRequests_ImmutabilityAndAudit) and procedures identify the exact dispatcher.
-async Task SetAndValidateDispatcherContextAsync(SqlConnection conn, int userId, string expectedUsername, bool updateLastLogin = false)
+// Sets AND validates SQL Server SESSION_CONTEXT + RBAC flags on each database connection
+async Task<(bool CanDispatch, bool CanManageFleet, bool CanManagePolicies, bool CanManageBilling, bool CanManageUsers)>
+    SetAndValidateDispatcherContextAsync(SqlConnection conn, int userId, string expectedUsername, bool updateLastLogin = false)
 {
     await using var ctxCmd = new SqlCommand("dbo.usp_SetDispatcherSessionContext", conn)
     {
@@ -163,6 +315,13 @@ async Task SetAndValidateDispatcherContextAsync(SqlConnection conn, int userId, 
     {
         throw new UnauthorizedAccessException("Database SESSION_CONTEXT validation mismatch.");
     }
+
+    bool canDispatch = reader.FieldCount > 3 && !reader.IsDBNull(3) && reader.GetBoolean(3);
+    bool canManageFleet = reader.FieldCount > 4 && !reader.IsDBNull(4) && reader.GetBoolean(4);
+    bool canManagePolicies = reader.FieldCount > 5 && !reader.IsDBNull(5) && reader.GetBoolean(5);
+    bool canManageBilling = reader.FieldCount > 6 && !reader.IsDBNull(6) && reader.GetBoolean(6);
+    bool canManageUsers = reader.FieldCount > 7 && !reader.IsDBNull(7) && reader.GetBoolean(7);
+    return (canDispatch, canManageFleet, canManagePolicies, canManageBilling, canManageUsers);
 }
 
 async Task<SqlConnection> OpenAuthenticatedConnectionAsync(HttpContext httpContext)
@@ -178,7 +337,12 @@ async Task<SqlConnection> OpenAuthenticatedConnectionAsync(HttpContext httpConte
     var conn = await OpenRawLeastPrivilegeConnectionAsync();
     try
     {
-        await SetAndValidateDispatcherContextAsync(conn, userId, username, updateLastLogin: false);
+        var perms = await SetAndValidateDispatcherContextAsync(conn, userId, username, updateLastLogin: false);
+        httpContext.Items["CanDispatch"] = perms.CanDispatch;
+        httpContext.Items["CanManageFleet"] = perms.CanManageFleet;
+        httpContext.Items["CanManagePolicies"] = perms.CanManagePolicies;
+        httpContext.Items["CanManageBilling"] = perms.CanManageBilling;
+        httpContext.Items["CanManageUsers"] = perms.CanManageUsers;
         return conn;
     }
     catch
@@ -189,10 +353,22 @@ async Task<SqlConnection> OpenAuthenticatedConnectionAsync(HttpContext httpConte
 }
 
 static string RowVerToHex(byte[] bytes) => "0x" + Convert.ToHexString(bytes);
-static byte[] HexToRowVer(string hex)
+static bool TryHexToRowVer(string? hex, out byte[] rowVer)
 {
-    string clean = hex.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? hex[2..] : hex;
-    return Convert.FromHexString(clean);
+    rowVer = Array.Empty<byte>();
+    if (string.IsNullOrWhiteSpace(hex)) return false;
+    string clean = hex.Trim();
+    if (clean.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) clean = clean[2..];
+    if (clean.Length != 16) return false;
+    try
+    {
+        rowVer = Convert.FromHexString(clean);
+        return rowVer.Length == 8;
+    }
+    catch (FormatException)
+    {
+        return false;
+    }
 }
 
 static void AddDecimalParam(SqlCommand cmd, string name, byte precision, byte scale, object value)
@@ -203,37 +379,74 @@ static void AddDecimalParam(SqlCommand cmd, string name, byte precision, byte sc
     p.Value = value;
 }
 
-static bool TryValidateSessionToken(string token, byte[] secretKey, out int userId, out string username)
+static string CreateSessionToken(int userId, string username, string station, byte[] secretKey)
+{
+    string jti = Convert.ToHexString(RandomNumberGenerator.GetBytes(12));
+    string jsonPayload = JsonSerializer.Serialize(new SessionTokenPayload(
+        userId,
+        username,
+        station,
+        DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        jti
+    ));
+    string b64Payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(jsonPayload));
+    byte[] signedSegment = Encoding.ASCII.GetBytes($"TRK.{b64Payload}");
+    using var hmac = new HMACSHA256(secretKey);
+    string signatureHex = Convert.ToHexString(hmac.ComputeHash(signedSegment));
+    return $"TRK.{b64Payload}.{signatureHex}";
+}
+
+static bool TryValidateSessionToken(
+    string token,
+    byte[] secretKey,
+    ConcurrentDictionary<string, long> revokedJtis,
+    ConcurrentDictionary<int, long> userRevokedBefore,
+    out int userId,
+    out string username,
+    out string jti,
+    out long expiresAtUnix)
 {
     userId = 0;
     username = "";
+    jti = "";
+    expiresAtUnix = 0;
     try
     {
+        if (string.IsNullOrWhiteSpace(token) || token.Length > 1024) return false;
         string[] parts = token.Split('.');
-        if (parts.Length != 3 || parts[0] != "TRK") return false;
+        if (parts.Length != 3 || parts[0] != "TRK" || parts[2].Length != 64) return false;
 
-        string payload = Encoding.UTF8.GetString(Convert.FromBase64String(parts[1]));
-        string[] values = payload.Split(':');
-        if (values.Length != 4) return false;
-        if (!int.TryParse(values[0], out userId) || userId <= 0) return false;
-        if (!long.TryParse(values[3], out long issuedAt)) return false;
-
-        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        if (issuedAt > now + 300 || now - issuedAt > 12 * 60 * 60) return false;
-
-        using var hmac = new HMACSHA256(secretKey);
-        byte[] expected = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
         byte[] supplied = Convert.FromHexString(parts[2]);
+        byte[] signedSegment = Encoding.ASCII.GetBytes($"TRK.{parts[1]}");
+        using var hmac = new HMACSHA256(secretKey);
+        byte[] expected = hmac.ComputeHash(signedSegment);
         if (!CryptographicOperations.FixedTimeEquals(expected, supplied)) return false;
 
-        username = values[1];
-        return !string.IsNullOrWhiteSpace(username);
+        byte[] payloadBytes = Convert.FromBase64String(parts[1]);
+        string payload = Encoding.UTF8.GetString(payloadBytes);
+        var parsed = JsonSerializer.Deserialize<SessionTokenPayload>(payload);
+        if (parsed is null || parsed.Uid <= 0 || string.IsNullOrWhiteSpace(parsed.Uname)) return false;
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (parsed.Iat > now + 300 || now - parsed.Iat > 12 * 60 * 60) return false;
+
+        if (!string.IsNullOrWhiteSpace(parsed.Jti) && revokedJtis.ContainsKey(parsed.Jti)) return false;
+        if (userRevokedBefore.TryGetValue(parsed.Uid, out long cutoff) && parsed.Iat <= cutoff) return false;
+
+        userId = parsed.Uid;
+        username = parsed.Uname;
+        jti = parsed.Jti ?? "";
+        expiresAtUnix = parsed.Iat + 12 * 60 * 60;
+        return true;
     }
-    catch (FormatException)
+    catch
     {
         return false;
     }
 }
+
+// Precomputed cost-12 BCrypt dummy hash so unknown-username login checks run in constant time
+string dummyBcryptHash = BCrypt.Net.BCrypt.HashPassword("ConstantTimeDummyGuard@2026", workFactor: 12);
 
 // Road-distance calculation with explicit provenance (Doctor Requirement #7):
 // 1. If a dispatcher supplied an explicit verified road distance (> 0), tag as 'DispatcherVerifiedEstimate'.
@@ -283,6 +496,11 @@ async Task<(decimal? RoadDistanceKm, decimal? DurationMinutes, string DistanceSo
 ==============================================================================*/
 app.MapPost("/api/auth/login", async (LoginRequestDto dto) =>
 {
+    if ((dto.Username?.Length ?? 0) > 60 || (dto.Password?.Length ?? 0) > 128)
+    {
+        return Results.Unauthorized();
+    }
+
     try
     {
         await using var conn = await OpenAnonymousAuthConnectionAsync();
@@ -320,20 +538,17 @@ app.MapPost("/api/auth/login", async (LoginRequestDto dto) =>
             }
         }
 
-        bool passwordValid = foundUser
-            && !string.IsNullOrWhiteSpace(passwordHash)
-            && BCrypt.Net.BCrypt.Verify(dto.Password ?? "", passwordHash);
-
-        if (!passwordValid)
+        string hashToCheck = foundUser && !string.IsNullOrWhiteSpace(passwordHash)
+            ? passwordHash
+            : dummyBcryptHash;
+        bool hashMatches = BCrypt.Net.BCrypt.Verify(dto.Password ?? "", hashToCheck);
+        if (!foundUser || !hashMatches)
         {
             return Results.Unauthorized();
         }
 
         await SetAndValidateDispatcherContextAsync(conn, uid, uname, updateLastLogin: true);
-
-        string payload = $"{uid}:{uname}:{station}:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
-        using var hmac = new HMACSHA256(tokenSecret);
-        string signatureHex = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
+        string sessionToken = CreateSessionToken(uid, uname, station, tokenSecret);
 
         return Results.Ok(new
         {
@@ -356,16 +571,29 @@ app.MapPost("/api/auth/login", async (LoginRequestDto dto) =>
                 canManageBilling,
                 canManageUsers,
                 encryptionAlgorithm = "BCrypt (Cost=12) + 3NF UserGroups + EXECUTE-Only Role + SESSION_CONTEXT Audit",
-                sessionToken = $"TRK.{Convert.ToBase64String(Encoding.UTF8.GetBytes(payload))}.{signatureHex}",
+                sessionToken,
                 loginTime = DateTime.Now.ToString("HH:mm:ss")
             }
         });
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 }).RequireRateLimiting("login");
+
+app.MapPost("/api/auth/logout", (HttpContext httpContext) =>
+{
+    PruneExpiredRevocations();
+    if (httpContext.Items["OperatorTokenJti"] is string jti && !string.IsNullOrWhiteSpace(jti))
+    {
+        long exp = httpContext.Items["OperatorTokenExp"] is long e
+            ? e
+            : DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 12 * 60 * 60;
+        revokedTokenJtis[jti] = exp;
+    }
+    return Results.Ok(new { success = true, message = "Operator session revoked." });
+});
 
 /*==============================================================================
   ENDPOINT 1: GET /api/dashboard
@@ -995,7 +1223,7 @@ app.MapPost("/api/tow-requests", async (HttpContext httpContext, CreateTowReques
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1042,7 +1270,7 @@ app.MapPost("/api/tow-requests/{id:int}/dispatch", async (HttpContext httpContex
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1071,7 +1299,7 @@ app.MapPost("/api/tow-requests/{id:int}/status", async (HttpContext httpContext,
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1096,7 +1324,7 @@ app.MapPost("/api/trucks/{truckId:int}/reorder-queue", async (HttpContext httpCo
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1122,7 +1350,7 @@ app.MapPost("/api/plate-codes", async (HttpContext httpContext, CreatePlateCodeD
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1153,7 +1381,7 @@ app.MapPut("/api/quota-tiers/{tierId:int}", async (HttpContext httpContext, int 
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1180,7 +1408,7 @@ app.MapPost("/api/policies/{policyId:int}/tiers", async (HttpContext httpContext
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1212,7 +1440,7 @@ app.MapPost("/api/customers", async (HttpContext httpContext, CreateCustomerDto 
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1231,8 +1459,12 @@ app.MapPost("/api/policies", async (HttpContext httpContext, CreatePolicyDto dto
         cmd.Parameters.Add("@Email", SqlDbType.VarChar, 120).Value = (object?)dto.CustomerEmail ?? DBNull.Value;
         cmd.Parameters.Add("@PolicyNumber", SqlDbType.VarChar, 40).Value = dto.PolicyNumber;
         cmd.Parameters.Add("@ProviderId", SqlDbType.Int).Value = dto.ProviderId;
-        cmd.Parameters.Add("@StartDate", SqlDbType.Date).Value = DateTime.Parse(dto.StartDate);
-        cmd.Parameters.Add("@ExpirationDate", SqlDbType.Date).Value = DateTime.Parse(dto.ExpirationDate);
+        if (!DateTime.TryParse(dto.StartDate, out var parsedStart) || !DateTime.TryParse(dto.ExpirationDate, out var parsedEnd))
+        {
+            return Results.BadRequest(new { success = false, error = "Invalid policy StartDate or ExpirationDate format." });
+        }
+        cmd.Parameters.Add("@StartDate", SqlDbType.Date).Value = parsedStart;
+        cmd.Parameters.Add("@ExpirationDate", SqlDbType.Date).Value = parsedEnd;
         AddDecimalParam(cmd, "@DefaultAllowedKm", 8, 2, dto.DefaultAllowedKm);
         cmd.Parameters.Add("@MechanicalAllowedTows", SqlDbType.Int).Value = dto.MechanicalAllowedTows;
         cmd.Parameters.Add("@MechanicalCooldownDays", SqlDbType.Int).Value = dto.MechanicalCooldownDays;
@@ -1261,7 +1493,7 @@ app.MapPost("/api/policies", async (HttpContext httpContext, CreatePolicyDto dto
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1300,7 +1532,7 @@ app.MapPut("/api/drivers/{driverId:int}", async (HttpContext httpContext, int dr
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1326,13 +1558,9 @@ app.MapPost("/api/drivers", async (HttpContext httpContext, CreateDriverDto dto)
         int newDriverId = Convert.ToInt32(await cmd.ExecuteScalarAsync());
         return Results.Ok(new { success = true, driverId = newDriverId, message = $"Driver '{dto.FullName.Trim()}' ({dto.EmployeeCode.Trim()}) created in dbo.Drivers." });
     }
-    catch (SqlException ex) when (ex.Number == 50060)
-    {
-        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: 403);
-    }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1357,13 +1585,9 @@ app.MapPost("/api/trucks", async (HttpContext httpContext, UpsertTowTruckDto dto
         int newTruckId = Convert.ToInt32(await cmd.ExecuteScalarAsync());
         return Results.Ok(new { success = true, truckId = newTruckId, message = $"Tow truck '{dto.TruckCode.Trim()}' registered in dbo.TowTrucks." });
     }
-    catch (SqlException ex) when (ex.Number == 50060)
-    {
-        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: 403);
-    }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1389,13 +1613,9 @@ app.MapPut("/api/trucks/{truckId:int}", async (HttpContext httpContext, int truc
         await cmd.ExecuteNonQueryAsync();
         return Results.Ok(new { success = true, message = $"Tow truck '{dto.TruckCode.Trim()}' updated in dbo.TowTrucks." });
     }
-    catch (SqlException ex) when (ex.Number == 50060)
-    {
-        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: 403);
-    }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1417,7 +1637,7 @@ app.MapPost("/api/driver-assignments/{assignmentId:int}/end", async (HttpContext
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1441,7 +1661,7 @@ app.MapPut("/api/customers/{customerId:int}", async (HttpContext httpContext, in
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1464,7 +1684,7 @@ app.MapPost("/api/driver-assignments", async (HttpContext httpContext, AssignDri
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1484,7 +1704,11 @@ app.MapPost("/api/tariffs", async (HttpContext httpContext, CreateTariffDto dto)
         AddDecimalParam(cmd, "@BaseFee", 10, 2, dto.BaseFee);
         AddDecimalParam(cmd, "@PricePerKm", 8, 2, dto.PricePerKm);
         AddDecimalParam(cmd, "@NightSurcharge", 10, 2, dto.NightSurcharge);
-        cmd.Parameters.Add("@EffectiveFrom", SqlDbType.Date).Value = DateTime.Parse(dto.EffectiveFrom);
+        if (!DateTime.TryParse(dto.EffectiveFrom, out var parsedEffectiveFrom))
+        {
+            return Results.BadRequest(new { success = false, error = "Invalid tariff EffectiveFrom date format." });
+        }
+        cmd.Parameters.Add("@EffectiveFrom", SqlDbType.Date).Value = parsedEffectiveFrom;
 
         await using var reader = await cmd.ExecuteReaderAsync();
         object? tariff = null;
@@ -1501,7 +1725,7 @@ app.MapPost("/api/tariffs", async (HttpContext httpContext, CreateTariffDto dto)
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1544,7 +1768,7 @@ app.MapPost("/api/invoices/{invoiceId:int}/payments", async (HttpContext httpCon
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1558,6 +1782,21 @@ app.MapPost("/api/tow-requests/{id:int}/test-immutability-trigger", async (HttpC
     try
     {
         await using var conn = await OpenAuthenticatedConnectionAsync(httpContext);
+        await using (var detailCmd = new SqlCommand("dbo.usp_GetTowRequestDetailById", conn) { CommandType = CommandType.StoredProcedure })
+        {
+            detailCmd.Parameters.Add("@TowRequestId", SqlDbType.Int).Value = id;
+            await using var r = await detailCmd.ExecuteReaderAsync();
+            if (!await r.ReadAsync())
+            {
+                return Results.NotFound(new { success = false, error = "Tow request not found." });
+            }
+            string currentStatus = r.GetString(r.GetOrdinal("Status"));
+            if (currentStatus is not ("Done" or "UnableToLoad" or "Rejected"))
+            {
+                return Results.BadRequest(new { success = false, error = "Compliance seal verification applies only to finalized tickets." });
+            }
+        }
+
         await using var cmd = new SqlCommand("dbo.usp_UpdateTowLifecycleStatus", conn)
         {
             CommandType = CommandType.StoredProcedure
@@ -1568,9 +1807,13 @@ app.MapPost("/api/tow-requests/{id:int}/test-immutability-trigger", async (HttpC
         cmd.Parameters.Add("@RejectionReason", SqlDbType.NVarChar, 300).Value = DBNull.Value;
 
         await cmd.ExecuteNonQueryAsync();
-        return Results.Ok(new { blockedByTrigger = false, message = "Ticket was modified (it was not in a finalized state)." });
+        return Results.Ok(new { blockedByTrigger = false, message = "Ticket was modified." });
     }
-    catch (SqlException ex)
+    catch (SqlException ex) when (ex.Number is 50030 or 50031 or 50032 or 50060)
+    {
+        return MapSqlExceptionResult(ex);
+    }
+    catch (SqlException ex) when (ex.Number >= 50000 && ex.Number <= 50999)
     {
         return Results.Ok(new
         {
@@ -1579,6 +1822,10 @@ app.MapPost("/api/tow-requests/{id:int}/test-immutability-trigger", async (HttpC
             triggerMessage = ex.Message
         });
     }
+    catch (SqlException ex)
+    {
+        return MapSqlExceptionResult(ex);
+    }
 });
 
 /*==============================================================================
@@ -1586,6 +1833,11 @@ app.MapPost("/api/tow-requests/{id:int}/test-immutability-trigger", async (HttpC
 ==============================================================================*/
 app.MapPut("/api/tow-requests/{id:int}/optimistic-edit", async (HttpContext httpContext, int id, OptimisticEditDto dto) =>
 {
+    if (!TryHexToRowVer(dto.ExpectedRowVerHex, out byte[] rowVerBytes))
+    {
+        return Results.BadRequest(new { success = false, error = "Invalid 8-byte hexadecimal revision token." });
+    }
+
     try
     {
         await using var conn = await OpenAuthenticatedConnectionAsync(httpContext);
@@ -1598,22 +1850,22 @@ app.MapPut("/api/tow-requests/{id:int}/optimistic-edit", async (HttpContext http
         cmd.Parameters.Add("@TowRequestId", SqlDbType.Int).Value = id;
         cmd.Parameters.Add("@NewIssueType", SqlDbType.VarChar, 20).Value = dto.IssueType;
         cmd.Parameters.Add("@NewIssueNotes", SqlDbType.NVarChar, 400).Value = dto.IssueNotes;
-        cmd.Parameters.Add("@ExpectedRowVer", SqlDbType.Binary, 8).Value = HexToRowVer(dto.ExpectedRowVerHex);
+        cmd.Parameters.Add("@ExpectedRowVer", SqlDbType.Binary, 8).Value = rowVerBytes;
 
         await cmd.ExecuteNonQueryAsync();
         return Results.Ok(new { success = true, message = "Draft updated successfully (ROWVERSION matched)." });
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
 /*==============================================================================
   ENDPOINT 13: POST /api/concurrency/simulate-race
-  Runs two parallel database connections with DISTINCT SESSION_CONTEXT dispatchers
-  (Rami Nassar vs Karim Haddad) competing for the last remaining Accident tow on
-  Policy #2, proving UPDLOCK + ROWLOCK + SESSION_CONTEXT audit attribution!
+  Runs two parallel database connections under the authenticated caller's
+  SESSION_CONTEXT competing for the last remaining Accident tow on Policy #2,
+  proving UPDLOCK + ROWLOCK row-level serialization & audit attribution!
 ==============================================================================*/
 app.MapPost("/api/concurrency/simulate-race", async (HttpContext httpContext) =>
 {
@@ -1696,8 +1948,10 @@ app.MapPost("/api/concurrency/simulate-race", async (HttpContext httpContext) =>
         }
     }
 
-    var task1 = RunDispatcherAsync("Rami Nassar (dispatch.beirut)", 2, "dispatch.beirut", reqIdA, reqNumA, 3, 0);
-    var task2 = RunDispatcherAsync("Karim Haddad (fleet.manager)", 3, "fleet.manager", reqIdB, reqNumB, 4, 25);
+    int callerId = (int)(httpContext.Items["OperatorUserId"] ?? 0);
+    string callerName = (string)(httpContext.Items["OperatorUsername"] ?? "operator");
+    var task1 = RunDispatcherAsync($"{callerName} (Desk Session #1)", callerId, callerName, reqIdA, reqNumA, 3, 0);
+    var task2 = RunDispatcherAsync($"{callerName} (Desk Session #2)", callerId, callerName, reqIdB, reqNumB, 4, 25);
 
     var results = await Task.WhenAll(task1, task2);
 
@@ -1727,7 +1981,7 @@ app.MapPost("/api/concurrency/simulate-race", async (HttpContext httpContext) =>
         concurrencyMechanism = "BEGIN TRAN + WITH (UPDLOCK, ROWLOCK) + SESSION_CONTEXT + TRY...CATCH + ROLLBACK TRAN",
         sessionResults = results
     });
-});
+}).RequireRateLimiting("ops-heavy");
 
 /*==============================================================================
   ENDPOINT 14: GET /api/performance/search
@@ -1744,11 +1998,16 @@ app.MapGet("/api/performance/search", async (
     string? endDate,
     string? vehiclePlate,
     string? matchMode,
-    string? domain) =>
+    string? domain,
+    int? page,
+    int? pageSize) =>
 {
-    var statsMessages = new List<string>();
+    if (domain is not null && domain.Length > 8192)
+    {
+        return Results.BadRequest(new { success = false, error = "Search domain filter exceeds maximum allowed length." });
+    }
+
     await using var conn = await OpenAuthenticatedConnectionAsync(httpContext);
-    conn.InfoMessage += (_, e) => statsMessages.Add(e.Message);
 
     string normalizedMode = (mode ?? (string.IsNullOrWhiteSpace(domain) ? "daterange" : "domain")).Trim().ToLowerInvariant();
     string normalizedMatch = string.Equals(matchMode, "any", StringComparison.OrdinalIgnoreCase) ? "any" : "all";
@@ -1796,10 +2055,17 @@ app.MapGet("/api/performance/search", async (
     pEnd.Scale = 0;
     pEnd.Value = end;
 
+    int safePage = Math.Max(1, page ?? 1);
+    int safePageSize = Math.Clamp(pageSize ?? 50, 10, 250);
+
     cmd.Parameters.Add("@VehiclePlate", SqlDbType.VarChar, 30).Value = (vehiclePlate ?? "M 100001").Trim();
     cmd.Parameters.Add("@MatchMode", SqlDbType.VarChar, 10).Value = normalizedMatch;
     cmd.Parameters.Add("@DomainJson", SqlDbType.NVarChar, -1).Value =
         string.IsNullOrWhiteSpace(domain) ? DBNull.Value : domain;
+    cmd.Parameters.Add("@Page", SqlDbType.Int).Value = safePage;
+    cmd.Parameters.Add("@PageSize", SqlDbType.Int).Value = safePageSize;
+    var pTotal = cmd.Parameters.Add("@TotalMatched", SqlDbType.Int);
+    pTotal.Direction = ParameterDirection.Output;
 
     var sw = Stopwatch.StartNew();
     var rows = new List<object>();
@@ -1829,14 +2095,21 @@ app.MapGet("/api/performance/search", async (
     }
     sw.Stop();
 
+    int totalMatched = pTotal.Value != null && pTotal.Value != DBNull.Value
+        ? Convert.ToInt32(pTotal.Value)
+        : rows.Count;
+    if (totalMatched == 0 && rows.Count > 0) totalMatched = rows.Count;
+
     return Results.Ok(new
     {
         mode = normalizedMode,
         elapsedMs = Math.Round(sw.Elapsed.TotalMilliseconds, 2),
+        totalMatched,
         rowCountReturned = rows.Count,
+        page = safePage,
+        pageSize = safePageSize,
         indexUsed = indexName,
         planCharacteristics = queryPlanNote,
-        statisticsIo = string.Join(" | ", statsMessages),
         rows
     });
 });
@@ -1881,7 +2154,7 @@ app.MapGet("/api/admin/user-groups", async (HttpContext httpContext) =>
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1911,13 +2184,9 @@ app.MapPost("/api/admin/user-groups", async (HttpContext httpContext, UpsertUser
             message = $"Created normalized User Group '{dto.GroupName.Trim()}' ({dto.GroupCode.Trim()}) in dbo.UserGroups."
         });
     }
-    catch (SqlException ex) when (ex.Number == 50032)
-    {
-        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: 403);
-    }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1947,13 +2216,9 @@ app.MapPut("/api/admin/user-groups/{groupId:int}", async (HttpContext httpContex
             message = $"Updated permissions & profile for User Group '{dto.GroupName.Trim()}' in dbo.UserGroups (inherited immediately by all assigned users)."
         });
     }
-    catch (SqlException ex) when (ex.Number == 50032)
-    {
-        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: 403);
-    }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -1971,13 +2236,9 @@ app.MapDelete("/api/admin/user-groups/{groupId:int}", async (HttpContext httpCon
         await cmd.ExecuteNonQueryAsync();
         return Results.Ok(new { success = true, message = "Deleted custom User Group from dbo.UserGroups." });
     }
-    catch (SqlException ex) when (ex.Number == 50032)
-    {
-        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: 403);
-    }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -2021,26 +2282,26 @@ app.MapGet("/api/admin/users", async (HttpContext httpContext) =>
 
         return Results.Ok(new { success = true, users });
     }
-    catch (SqlException ex) when (ex.Number == 50032)
-    {
-        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: 403);
-    }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
 app.MapPost("/api/admin/users", async (HttpContext httpContext, AdminCreateUserDto dto) =>
 {
-    if (string.IsNullOrWhiteSpace(dto.Password) || dto.Password.Length < 6)
+    if (string.IsNullOrWhiteSpace(dto.Password) || dto.Password.Length < 8 || dto.Password.Length > 128)
     {
-        return Results.BadRequest(new { success = false, error = "Password must be at least 6 characters (hashed with BCrypt cost=12)." });
+        return Results.BadRequest(new { success = false, error = "Password must be between 8 and 128 characters." });
     }
 
     try
     {
         await using var conn = await OpenAuthenticatedConnectionAsync(httpContext);
+        if (httpContext.Items["CanManageUsers"] is not true)
+        {
+            return Results.Json(new { success = false, error = "Administrator permission is required to provision operators." }, statusCode: StatusCodes.Status403Forbidden);
+        }
         string bcryptHash = BCrypt.Net.BCrypt.HashPassword(dto.Password, workFactor: 12);
 
         await using var cmd = new SqlCommand("dbo.usp_AdminCreateSystemUser", conn)
@@ -2054,7 +2315,7 @@ app.MapPost("/api/admin/users", async (HttpContext httpContext, AdminCreateUserD
         cmd.Parameters.Add("@Department", SqlDbType.NVarChar, 80).Value = dto.Department.Trim();
         cmd.Parameters.Add("@StationCode", SqlDbType.VarChar, 30).Value = dto.StationCode.Trim();
         cmd.Parameters.Add("@GroupId", SqlDbType.Int).Value = (object?)dto.GroupId ?? DBNull.Value;
-        cmd.Parameters.Add("@AccessRole", SqlDbType.VarChar, 30).Value = (object?)dto.AccessRole ?? DBNull.Value;
+        cmd.Parameters.Add("@AccessRole", SqlDbType.VarChar, 30).Value = DBNull.Value;
         cmd.Parameters.Add("@IsActive", SqlDbType.Bit).Value = dto.IsActive;
 
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -2081,26 +2342,26 @@ app.MapPost("/api/admin/users", async (HttpContext httpContext, AdminCreateUserD
             user = created
         });
     }
-    catch (SqlException ex) when (ex.Number == 50032)
-    {
-        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: 403);
-    }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
 app.MapPut("/api/admin/users/{userId:int}", async (HttpContext httpContext, int userId, AdminUpdateUserDto dto) =>
 {
-    if (!string.IsNullOrWhiteSpace(dto.NewPassword) && dto.NewPassword.Length < 6)
+    if (!string.IsNullOrWhiteSpace(dto.NewPassword) && (dto.NewPassword.Length < 8 || dto.NewPassword.Length > 128))
     {
-        return Results.BadRequest(new { success = false, error = "New password must be at least 6 characters when resetting password." });
+        return Results.BadRequest(new { success = false, error = "New password must be between 8 and 128 characters." });
     }
 
     try
     {
         await using var conn = await OpenAuthenticatedConnectionAsync(httpContext);
+        if (httpContext.Items["CanManageUsers"] is not true)
+        {
+            return Results.Json(new { success = false, error = "Administrator permission is required to modify operators." }, statusCode: StatusCodes.Status403Forbidden);
+        }
         string? newBcryptHash = !string.IsNullOrWhiteSpace(dto.NewPassword)
             ? BCrypt.Net.BCrypt.HashPassword(dto.NewPassword, workFactor: 12)
             : null;
@@ -2115,7 +2376,7 @@ app.MapPut("/api/admin/users/{userId:int}", async (HttpContext httpContext, int 
         cmd.Parameters.Add("@Department", SqlDbType.NVarChar, 80).Value = dto.Department.Trim();
         cmd.Parameters.Add("@StationCode", SqlDbType.VarChar, 30).Value = dto.StationCode.Trim();
         cmd.Parameters.Add("@GroupId", SqlDbType.Int).Value = (object?)dto.GroupId ?? DBNull.Value;
-        cmd.Parameters.Add("@AccessRole", SqlDbType.VarChar, 30).Value = (object?)dto.AccessRole ?? DBNull.Value;
+        cmd.Parameters.Add("@AccessRole", SqlDbType.VarChar, 30).Value = DBNull.Value;
         cmd.Parameters.Add("@IsActive", SqlDbType.Bit).Value = dto.IsActive;
         cmd.Parameters.Add("@NewPasswordHash", SqlDbType.VarChar, 255).Value = (object?)newBcryptHash ?? DBNull.Value;
 
@@ -2127,21 +2388,22 @@ app.MapPut("/api/admin/users/{userId:int}", async (HttpContext httpContext, int 
             gname = reader.GetString(14);
         }
 
+        if (newBcryptHash != null || !dto.IsActive)
+        {
+            userRevokedBeforeUnix[userId] = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        }
+
         return Results.Ok(new
         {
             success = true,
             message = newBcryptHash != null
-                ? $"Updated '{uname}' (assigned to '{gname}') & rotated BCrypt (cost=12) password."
-                : $"Updated '{uname}' profile & User Group ('{gname}') in dbo.SystemUsers."
+                ? $"Updated '{uname}' (assigned to '{gname}') and rotated portal password."
+                : $"Updated '{uname}' profile and User Group ('{gname}')."
         });
-    }
-    catch (SqlException ex) when (ex.Number == 50032)
-    {
-        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: 403);
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -2158,6 +2420,7 @@ app.MapDelete("/api/admin/users/{userId:int}", async (HttpContext httpContext, i
 
         await using var reader = await cmd.ExecuteReaderAsync();
         string targetUsername = "";
+        userRevokedBeforeUnix[userId] = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         string deletionMode = "HardDeleted";
         if (await reader.ReadAsync())
         {
@@ -2171,13 +2434,9 @@ app.MapDelete("/api/admin/users/{userId:int}", async (HttpContext httpContext, i
 
         return Results.Ok(new { success = true, deletionMode, message = msg });
     }
-    catch (SqlException ex) when (ex.Number == 50032)
-    {
-        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message }, statusCode: 403);
-    }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -2254,7 +2513,7 @@ app.MapGet("/api/changelogs", async (
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -2417,7 +2676,7 @@ app.MapGet("/api/tow-requests/{towRequestId:int}", async (HttpContext httpContex
     }
     catch (SqlException ex)
     {
-        return Results.BadRequest(new { success = false, sqlErrorNumber = ex.Number, error = ex.Message });
+        return MapSqlExceptionResult(ex);
     }
 });
 
@@ -2434,12 +2693,19 @@ static void LoadDotEnv(string filePath)
         if (idx <= 0) continue;
         string key = trimmed[..idx].Trim();
         string val = trimmed[(idx + 1)..].Trim();
+        if (val.Length >= 2 &&
+            ((val.StartsWith('"') && val.EndsWith('"')) || (val.StartsWith('\'') && val.EndsWith('\''))))
+        {
+            val = val[1..^1];
+        }
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key)))
         {
             Environment.SetEnvironmentVariable(key, val);
         }
     }
 }
+
+public record SessionTokenPayload(int Uid, string Uname, string Stn, long Iat, string? Jti = null);
 
 public record CreateTowRequestDto(
     int CustomerId,
@@ -2555,7 +2821,6 @@ public record AdminCreateUserDto(
     string Department,
     string StationCode,
     int? GroupId = null,
-    string? AccessRole = null,
     bool IsActive = true
 );
 public record AdminUpdateUserDto(
@@ -2564,7 +2829,6 @@ public record AdminUpdateUserDto(
     string Department,
     string StationCode,
     int? GroupId = null,
-    string? AccessRole = null,
     bool IsActive = true,
     string? NewPassword = null
 );

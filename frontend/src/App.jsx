@@ -17,6 +17,31 @@ const KANBAN_STAGES = [
   { key: 'Rejected', label: 'Rejected', color: '#ef4444' }
 ];
 
+const STATUS_DISPLAY_LABELS = {
+  PendingInsurance: 'Pending Insurance',
+  InProgress: 'In Progress',
+  UnableToLoad: 'Unable to Load',
+  PartiallyPaid: 'Partially Paid',
+  OnLeave: 'On Leave',
+  EnRoute: 'En Route',
+  OffDuty: 'Off Duty',
+  OnJob: 'On Job',
+  OSRM_DrivingRoute: 'OSRM Driving Route',
+  DispatcherVerifiedEstimate: 'Dispatcher Verified',
+  HeuristicFallbackEstimate: 'Road Heuristic',
+  InsuranceProvider: 'Insurance Provider',
+  BankTransfer: 'Bank Transfer',
+  InsurerBatchSettlement: 'Insurer Batch Settlement',
+  OnSceneCash: 'On-Scene Cash'
+};
+
+function formatLabel(val) {
+  if (val === null || val === undefined) return '';
+  const s = String(val);
+  if (STATUS_DISPLAY_LABELS[s]) return STATUS_DISPLAY_LABELS[s];
+  return s.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
 export default function App() {
   // Authenticated Operator Session (Backed by SQL Server dbo.SystemUsers)
   const [currentUser, setCurrentUser] = useState(() => {
@@ -32,7 +57,6 @@ export default function App() {
     password: ''
   });
   const [showPassword, setShowPassword] = useState(false);
-  const [showStationSwitcher, setShowStationSwitcher] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState('');
 
@@ -54,7 +78,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [policyWarningModal, setPolicyWarningModal] = useState(null);
-  const [incomingCallModal, setIncomingCallModal] = useState(null);
 
   // Call Intake & Eligibility Form State (Customer is separate 1:N parent of InsurancePolicies & Vehicles)
   const [selectedCustomerId, setSelectedCustomerId] = useState(1);
@@ -93,6 +116,8 @@ export default function App() {
   const [custPolDropdownOpen, setCustPolDropdownOpen] = useState(false);
   const [opsBillingDropdownOpen, setOpsBillingDropdownOpen] = useState(false);
   const [configDropdownOpen, setConfigDropdownOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const navHeaderRef = useRef(null);
   const [configSearch, setConfigSearch] = useState('');
 
   const [customerSearch, setCustomerSearch] = useState('');
@@ -135,7 +160,7 @@ export default function App() {
   const [assignDriverForm, setAssignDriverForm] = useState({
     driverId: 9,
     truckId: 3,
-    assignmentNotes: 'Shift rotation via normalized DriverTruckAssignments'
+    assignmentNotes: 'Standard fleet shift rotation'
   });
 
   // Billing & Tariffs Master-Detail State
@@ -166,7 +191,6 @@ export default function App() {
 
   // Dispatch Queue Detail Sheet State
   const [selectedTowRequestId, setSelectedTowRequestId] = useState(null);
-  const [towDetailNotebookTab, setTowDetailNotebookTab] = useState('invoice'); // 'invoice' | 'audits'
 
   // Configuration -> User Groups (Owns Permissions) & Users (Assigned to GroupId) Master-Detail State
   const [userGroups, setUserGroups] = useState([]);
@@ -246,13 +270,38 @@ export default function App() {
     const closeTopDialog = event => {
       if (event.key !== 'Escape') return;
       if (showPlateModal) setShowPlateModal(false);
+      else if (paymentModalInvoice) setPaymentModalInvoice(null);
       else if (locationPicker.open) setLocationPicker(prev => ({ ...prev, open: false }));
       else if (policyWarningModal) setPolicyWarningModal(null);
-      else if (incomingCallModal) setIncomingCallModal(null);
+      else if (changeLogOpen) setChangeLogOpen(false);
+      else {
+        setCustPolDropdownOpen(false);
+        setOpsBillingDropdownOpen(false);
+        setConfigDropdownOpen(false);
+        setMobileNavOpen(false);
+      }
     };
     document.addEventListener('keydown', closeTopDialog);
     return () => document.removeEventListener('keydown', closeTopDialog);
-  }, [showPlateModal, locationPicker.open, policyWarningModal, incomingCallModal]);
+  }, [showPlateModal, paymentModalInvoice, locationPicker.open, policyWarningModal, changeLogOpen]);
+
+  useEffect(() => {
+    const handleOutsidePointer = event => {
+      if (navHeaderRef.current && !navHeaderRef.current.contains(event.target)) {
+        setCustPolDropdownOpen(false);
+        setOpsBillingDropdownOpen(false);
+        setConfigDropdownOpen(false);
+        setMobileNavOpen(false);
+      }
+      if (!event.target.closest?.('.map-search-bar-wrap')) {
+        setLocationPicker(prev =>
+          prev.searchResults.length > 0 ? { ...prev, searchResults: [] } : prev
+        );
+      }
+    };
+    document.addEventListener('pointerdown', handleOutsidePointer);
+    return () => document.removeEventListener('pointerdown', handleOutsidePointer);
+  }, []);
 
   // Policy Quota Tier Editor & New Policy Form State
   const [editingTier, setEditingTier] = useState(null);
@@ -264,7 +313,6 @@ export default function App() {
     maxDistanceKm: 40,
     minIntervalDays: 7
   });
-  const [showTierEditor, setShowTierEditor] = useState(true);
   const [newCustomerForm, setNewCustomerForm] = useState({
     fullName: '',
     phone: '+961-03-',
@@ -416,6 +464,11 @@ export default function App() {
 
   const [domainMatchMode, setDomainMatchMode] = useState('all'); // 'all' | 'any'
   const [domainRules, setDomainRules] = useState(DEFAULT_ARCHIVE_DOMAIN);
+  const [domainPopupOpen, setDomainPopupOpen] = useState(false);
+  const [archiveQuickInput, setArchiveQuickInput] = useState('');
+  const domainWrapperRef = useRef(null);
+  const [perfPage, setPerfPage] = useState(1);
+  const [perfPageSize, setPerfPageSize] = useState(50);
   const [perfResult, setPerfResult] = useState(null);
   const [perfLoading, setPerfLoading] = useState(false);
 
@@ -460,8 +513,17 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    const tok = currentUser?.sessionToken;
+    if (tok) {
+      fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}` }
+      }).catch(() => {});
+    }
     sessionStorage.removeItem('tracker_operator_session');
     setCurrentUser(null);
+    setMobileNavOpen(false);
+    setChangeLogOpen(false);
     setLoginForm({ username: '', password: '' });
     setLoginError('');
   };
@@ -744,55 +806,6 @@ export default function App() {
     setLocationPicker(prev => ({ ...prev, open: false }));
   };
 
-  // Incoming Phone Call Pop-up Simulation (Only passes Caller Phone Number — does NOT auto-fill full form!)
-  const triggerIncomingCall = () => {
-    const samplePhones = [
-      '+961-03-111222',
-      '+961-70-222333',
-      '+961-71-333444',
-      '+961-03-444555',
-      '+961-76-889900'
-    ];
-    const pickedPhone = samplePhones[Math.floor(Math.random() * samplePhones.length)];
-    setIncomingCallModal({ phone: pickedPhone });
-  };
-
-  const acceptIncomingCall = phoneStr => {
-    setSelectedVehicleId('');
-    setIntakeForm({
-      callerName: '',
-      callerPhone: phoneStr,
-      hasInsurance: false,
-      vehicleDesc: '',
-      noPlate: false,
-      plateCodeId: 2,
-      plateDigits: '',
-      pickupAddress: '',
-      pickupLat: BEIRUT_LAT,
-      pickupLng: BEIRUT_LNG,
-      dropoffAddress: '',
-      dropoffLat: 33.8940,
-      dropoffLng: 35.5520,
-      verifiedRoadDistanceKm: '',
-      isOutsourced: false,
-      subcontractorId: 1,
-      subcontractorFee: 65.0,
-      assignedTruckId: '',
-      prioritySequence: 10,
-      cashCollected: 0,
-      extraKmRate: 2.5,
-      isNightShift: false,
-      notes: ''
-    });
-    setIncomingCallModal(null);
-    setActiveTab('intake');
-    showToast(
-      'success',
-      'Incoming Call Answered',
-      `Caller phone ${phoneStr} connected. Please enter the caller's details and breakdown location.`
-    );
-  };
-
   // Submit Call Intake (Supports Save Draft, Pending Insurance, and Approve & Dispatch)
   const handleCreateTowRequest = async (
     e,
@@ -893,7 +906,7 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Driver update failed');
-      showToast('success', 'Driver Updated (3NF)', data.message);
+      showToast('success', 'Driver Profile Updated', data.message);
       await fetchDashboard();
       if (changeLogOpen) await fetchChangeLogs();
     } catch (err) {
@@ -990,7 +1003,7 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Tow truck update failed');
-      showToast('success', 'Tow Truck Updated (3NF)', data.message);
+      showToast('success', 'Tow Truck Updated', data.message);
       await fetchDashboard();
       if (changeLogOpen) await fetchChangeLogs();
     } catch (err) {
@@ -1032,7 +1045,7 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Customer update failed');
-      showToast('success', 'Customer Updated (3NF)', data.message);
+      showToast('success', 'Customer Profile Updated', data.message);
       setEditingCustomerForm(null);
       await fetchDashboard();
       if (changeLogOpen) await fetchChangeLogs();
@@ -1121,7 +1134,7 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Payment failed');
-      showToast('success', 'Payment Recorded in InvoicePayments', data.message);
+      showToast('success', 'Invoice Payment Recorded', data.message);
       setPaymentModalInvoice(null);
       await fetchDashboard();
     } catch (err) {
@@ -1431,10 +1444,17 @@ export default function App() {
     }
   };
 
-  // >120k Rows Odoo Domain Search
-  const runPerformanceQuery = async (overrideRules, overrideMatchMode) => {
+  // >120k Rows Odoo Domain Search + Server-Side Pagination
+  const runPerformanceQuery = async (
+    overrideRules,
+    overrideMatchMode,
+    targetPage = 1,
+    targetPageSize = perfPageSize
+  ) => {
     setPerfLoading(true);
     setArchiveViewMode('list');
+    setPerfPage(targetPage);
+    setPerfPageSize(targetPageSize);
     const rulesToRun = (overrideRules || domainRules)
       .filter(r => String(r.value ?? '').trim() !== '')
       .map(r => ({
@@ -1447,7 +1467,9 @@ export default function App() {
       const params = new URLSearchParams({
         mode: 'domain',
         matchMode: matchVal,
-        domain: JSON.stringify(rulesToRun)
+        domain: JSON.stringify(rulesToRun),
+        page: String(targetPage),
+        pageSize: String(targetPageSize)
       });
       const res = await apiFetch(`${API_BASE}/performance/search?${params.toString()}`);
       const data = await res.json();
@@ -1513,48 +1535,11 @@ export default function App() {
         const opObj = def.ops.find(o => o.value === r.op) || def.ops[0];
         const formattedVal =
           r.op === 'starts_with' ? `${r.value}%` : String(r.value);
-        return `('${def.odooField}', '${opObj.odooOp}', '${formattedVal.replace(/'/g, "\\'")}')`;
+        const escapedVal = formattedVal.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return `('${def.odooField}', '${opObj.odooOp}', '${escapedVal}')`;
       })
       .join(', ');
     return `[${prefixOp}${tuples}]`;
-  };
-
-  // Admin RBAC Role Preset Helper
-  const getRolePermissionPreset = role => {
-    if (role === 'Admin') {
-      return {
-        canDispatch: true,
-        canManageFleet: true,
-        canManagePolicies: true,
-        canManageBilling: true,
-        canManageUsers: true
-      };
-    }
-    if (role === 'FleetManager') {
-      return {
-        canDispatch: true,
-        canManageFleet: true,
-        canManagePolicies: false,
-        canManageBilling: false,
-        canManageUsers: false
-      };
-    }
-    if (role === 'Underwriter') {
-      return {
-        canDispatch: false,
-        canManageFleet: false,
-        canManagePolicies: true,
-        canManageBilling: true,
-        canManageUsers: false
-      };
-    }
-    return {
-      canDispatch: true,
-      canManageFleet: false,
-      canManagePolicies: true,
-      canManageBilling: true,
-      canManageUsers: false
-    };
   };
 
   const fetchUserGroups = async () => {
@@ -1743,7 +1728,6 @@ export default function App() {
   const openTowRequestRecord = (towRequestId, stayOnArchive = false) => {
     const numId = Number(towRequestId);
     setSelectedTowRequestId(numId);
-    setTowDetailNotebookTab('invoice');
     if (towDetailData?.tow?.towRequestId !== numId) {
       setTowDetailData(null);
     }
@@ -1944,7 +1928,19 @@ export default function App() {
 
   useEffect(() => {
     setChangeLogFilter('');
+    setDomainPopupOpen(false);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!domainPopupOpen) return;
+    const handleOutsideClick = e => {
+      if (domainWrapperRef.current && !domainWrapperRef.current.contains(e.target)) {
+        setDomainPopupOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [domainPopupOpen]);
 
   useEffect(() => {
     if (changeLogOpen && currentUser && CHANGE_LOG_SECTIONS[activeTab]) {
@@ -2127,7 +2123,7 @@ export default function App() {
 
         <div className="erp-oe-title">
           <span className="erp-oe-label">
-            dbo.TowRequests #{r.towRequestId} • Created {r.createdAt}
+            Tow Request #{r.towRequestId} • Created {r.createdAt}
             {r.completedAt ? ` • Completed ${r.completedAt}` : ''}
           </span>
           <h1>{r.requestNumber}</h1>
@@ -2259,7 +2255,7 @@ export default function App() {
               <div className="erp-field-val">
                 <strong>{r.actualDistanceKm} km</strong>{' '}
                 <small className="muted">
-                  ({r.distanceSource} • Geodesic: {r.straightLineDistanceKm} km)
+                  ({formatLabel(r.distanceSource)} • Straight-line: {r.straightLineDistanceKm} km)
                 </small>
               </div>
             </div>
@@ -2274,7 +2270,7 @@ export default function App() {
                       onClick={() => openInvoiceRecord(r.invoiceId)}
                     >
                       {r.invoiceNumber || `Invoice #${r.invoiceId}`} (${r.totalInvoiceAmount} •{' '}
-                      {r.invoiceStatus})
+                      {formatLabel(r.invoiceStatus)})
                     </button>
                     {r.tariffCode ? (
                       <div className="muted" style={{ fontSize: '12px', marginTop: '3px' }}>
@@ -2304,37 +2300,39 @@ export default function App() {
               </button>
             </div>
             <div className="erp-notebook-page">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Paid At</th>
-                    <th>Payer</th>
-                    <th>Method &amp; Reference</th>
-                    <th>Recorded By</th>
-                    <th>Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {payments.map(pm => (
-                    <tr key={pm.paymentId}>
-                      <td>{pm.paidAt}</td>
-                      <td>
-                        {pm.payerType} — <strong>{pm.payerName}</strong>
-                      </td>
-                      <td>
-                        {pm.paymentMethod}
-                        {pm.referenceNumber ? ` • ${pm.referenceNumber}` : ''}
-                      </td>
-                      <td>
-                        {pm.recordedByFullName} ({pm.recordedByUsername})
-                      </td>
-                      <td>
-                        <strong>${pm.amountPaid}</strong>
-                      </td>
+              <div className="table-scroll">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Paid At</th>
+                      <th>Payer</th>
+                      <th>Method &amp; Reference</th>
+                      <th>Recorded By</th>
+                      <th>Amount</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {payments.map(pm => (
+                      <tr key={pm.paymentId}>
+                        <td>{pm.paidAt}</td>
+                        <td>
+                          {formatLabel(pm.payerType)} — <strong>{pm.payerName}</strong>
+                        </td>
+                        <td>
+                          {pm.paymentMethod}
+                          {pm.referenceNumber ? ` • ${pm.referenceNumber}` : ''}
+                        </td>
+                        <td>
+                          {pm.recordedByFullName} ({pm.recordedByUsername})
+                        </td>
+                        <td>
+                          <strong>${pm.amountPaid}</strong>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -2363,41 +2361,12 @@ export default function App() {
   };
 
   // ============================================================================
-  // MODERN SOLAR-AMBER & OBSIDIAN HERO + OPERATOR COMMAND LOGIN PORTAL
+  // OPERATOR COMMAND LOGIN PORTAL
   // ============================================================================
   if (!currentUser) {
-    const operatorProfiles = [
-      {
-        username: 'assaad.khalife',
-        name: 'Assaad Khalife',
-        role: 'Chief Operations & CAD Director',
-        station: 'BEY-CMD-01'
-      },
-      {
-        username: 'dispatch.beirut',
-        name: 'Rami Nassar',
-        role: 'Senior Emergency Dispatcher',
-        station: 'BEY-DSK-04'
-      },
-      {
-        username: 'fleet.manager',
-        name: 'Karim Haddad',
-        role: 'Fleet & Recovery Supervisor',
-        station: 'BEY-FLT-02'
-      },
-      {
-        username: 'claims.underwriter',
-        name: 'Maya Khoury',
-        role: 'Insurance Policy Specialist',
-        station: 'BEY-INS-01'
-      }
-    ];
-
     return (
       <div className="modern-landing-shell" id="top">
-        {/* STAGE 1: VIBRANT SOLAR-AMBER HERO + FLOATING OBSIDIAN LOGIN CARD */}
         <div className="solar-hero-stage">
-          {/* Geometric Constellation / Telemetry Network SVG Overlay */}
           <svg
             className="hero-constellation-svg"
             viewBox="0 0 1440 900"
@@ -2428,10 +2397,9 @@ export default function App() {
             </g>
           </svg>
 
-          {/* Top Minimalist Editorial Header */}
           <header className="solar-top-nav">
             <div className="solar-nav-left">
-              <a href="#top" className="solar-brand">
+              <span className="solar-brand">
                 <span className="solar-brand-mark" aria-hidden="true">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                     <path
@@ -2453,52 +2421,18 @@ export default function App() {
                 <span className="solar-brand-text">
                   TRACKER <em>Connect™</em>
                 </span>
-              </a>
-
-              <nav className="solar-nav-links" aria-label="Landing sections">
-                <a href="#top">Home</a>
-                <a href="#fleetlogic">FleetLogic™</a>
-                <a href="#solutions">Roadside Assist</a>
-                <a href="#insurers">Insurer Quotas</a>
-              </nav>
-            </div>
-
-            <div className="solar-nav-right">
-              <span className="solar-hotline">24/7 CAD • (+961) 01-401-999</span>
-              <a href="#operator-login-card" className="solar-black-pill">
-                Operator Portal
-              </a>
+              </span>
             </div>
           </header>
 
-          {/* Main Asymmetric Hero Grid */}
           <div className="solar-hero-grid">
-            {/* Left / Center Kinetic 3D Showcase */}
             <div className="solar-showcase-col">
-              {/* Vertical Scroll Cue */}
-              <a href="#solutions" className="solar-scroll-cue" aria-label="Scroll to platform details">
-                <span className="solar-scroll-label">Scroll</span>
-                <span className="solar-scroll-line" aria-hidden="true">
-                  <svg width="16" height="58" viewBox="0 0 16 58" fill="none">
-                    <line x1="8" y1="0" x2="8" y2="52" stroke="currentColor" strokeWidth="1.8" />
-                    <path
-                      d="M2 46L8 53L14 46"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </span>
-              </a>
-
               <div className="solar-headline-stage">
                 <div className="solar-eyebrow">
                   <span className="solar-live-dot"></span>
                   National GPS Telemetry &amp; Insurance CAD
                 </div>
 
-                {/* 3D Tow Truck Centerpiece + Overlapping Display Typography */}
                 <div className="solar-visual-composition">
                   <h1 className="solar-display-title">
                     <span className="solar-title-top">Rocket</span>
@@ -2519,20 +2453,10 @@ export default function App() {
                     <span className="solar-chip-dark">Beirut • Mount Lebanon • North • Bekaa • South</span>
                     <span className="solar-chip-glass">24/7 Emergency Dispatch • National Fleet Network</span>
                   </div>
-
-                  <div className="solar-how-it-works">
-                    <h3>How does it work?</h3>
-                    <p>
-                      From emergency CTI call intake and OSRM road-distance routing to multi-policy
-                      insurer quota verification, Tracker Connect™ unifies fleet dispatch and driver
-                      settlement in real time.
-                    </p>
-                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Right Column: Floating Obsidian Command Login Card */}
             <div className="obsidian-login-wrap" id="operator-login-card">
               <div className="obsidian-login-card">
                 <div className="obsidian-login-pill-header">Operator Sign In</div>
@@ -2541,7 +2465,7 @@ export default function App() {
                   <h2>Command Portal</h2>
                   <p>
                     Sign in with your assigned station credentials to access live GPS fleet
-                    dispatch, CTI call intake, and policy underwriting controls.
+                    dispatch, call intake, and policy underwriting controls.
                   </p>
                 </div>
 
@@ -2586,57 +2510,15 @@ export default function App() {
                   </div>
 
                   <button type="submit" className="obsidian-submit-btn" disabled={loginLoading}>
-                    {loginLoading
-                      ? 'Authenticating...'
-                      : 'Sign In'}
+                    {loginLoading ? 'Authenticating...' : 'Sign In'}
                   </button>
                 </form>
 
-                {/* Clean Enterprise Shift Desk Switcher + Capability Icons */}
                 <div className="obsidian-card-footer">
-                  <p className="obsidian-shift-prompt">
-                    Assigned to a command desk?{' '}
-                    <button
-                      type="button"
-                      className="obsidian-shift-toggle"
-                      onClick={() => setShowStationSwitcher(prev => !prev)}
-                    >
-                      {showStationSwitcher ? 'Hide Stations ▴' : 'Select Station ID ▾'}
-                    </button>
-                  </p>
-
-                  {showStationSwitcher && (
-                    <div className="obsidian-operators-grid">
-                      {operatorProfiles.map(op => (
-                        <button
-                          key={op.username}
-                          type="button"
-                          className={
-                            loginForm.username === op.username
-                              ? 'obsidian-op-chip active'
-                              : 'obsidian-op-chip'
-                          }
-                          onClick={() => {
-                            setLoginForm({ username: op.username, password: '' });
-                            setLoginError('');
-                          }}
-                        >
-                          <div className="obsidian-op-name">{op.name}</div>
-                          <div className="obsidian-op-role">{op.role}</div>
-                          <div className="obsidian-op-meta">
-                            <code>{op.username}</code>
-                            <span>{op.station}</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
                   <div className="obsidian-protocol-strip" aria-label="Platform capabilities">
                     <span className="obsidian-proto-label">Connected Modules</span>
                     <div className="obsidian-proto-icons">
                       <span title="Live GPS Fleet CAD">GPS</span>
-                      <span title="24/7 Emergency CTI Telephony">CTI</span>
                       <span title="Real-Time Road Routing">OSRM</span>
                       <span title="Insurer Policy Underwriting">SLA</span>
                     </div>
@@ -2646,77 +2528,6 @@ export default function App() {
             </div>
           </div>
         </div>
-
-        {/* STAGE 2: MIDNIGHT HORIZON PLATFORM CAPABILITIES SHOWCASE */}
-        <section className="midnight-horizon-section" id="solutions">
-          <div className="midnight-horizon-inner">
-            <div className="midnight-section-head">
-              <span className="midnight-eyebrow">ENTERPRISE FLEET &amp; RECOVERY PLATFORM</span>
-              <h2>
-                Roadside Recovery &amp; <span>Fleet Command</span> Engine
-              </h2>
-              <p>
-                Engineered for high-volume national dispatch across 120,000+ service operations with
-                live GPS fleet telemetry, automated insurer eligibility verification, and instant
-                road-network routing.
-              </p>
-            </div>
-
-            {/* 4 Live Operational Metrics */}
-            <div className="midnight-stats-grid">
-              <div className="midnight-stat-card">
-                <div className="midnight-stat-val">120,000+</div>
-                <div className="midnight-stat-title">Completed Recoveries</div>
-                <p>Full national dispatch history with tamper-proof compliance auditing.</p>
-              </div>
-              <div className="midnight-stat-card">
-                <div className="midnight-stat-val">Live CAD</div>
-                <div className="midnight-stat-title">GPS Telemetry &amp; Routing</div>
-                <p>Interactive Lebanon map, live traffic overlay, and multi-stop truck queues.</p>
-              </div>
-              <div className="midnight-stat-card">
-                <div className="midnight-stat-val">Multi-Tier</div>
-                <div className="midnight-stat-title">Quota &amp; Cooldown Engine</div>
-                <p>Sequential policy tier tracking, distance allowances, and interval checks.</p>
-              </div>
-              <div className="midnight-stat-card">
-                <div className="midnight-stat-val">Real-Time</div>
-                <div className="midnight-stat-title">Multi-Desk Synchronization</div>
-                <p>Instant quota locking and revision protection across all dispatch stations.</p>
-              </div>
-            </div>
-
-            {/* 3 Platform Pillars */}
-            <div className="midnight-pillars-grid">
-              <article className="midnight-pillar-card">
-                <div className="midnight-pillar-num">01</div>
-                <h3>24/7 Roadside &amp; Accident Assist</h3>
-                <p>
-                  Instant caller CTI identification, precision GPS pin drop, OSRM road-distance
-                  routing, and automated excess-kilometer overage calculation.
-                </p>
-              </article>
-
-              <article className="midnight-pillar-card" id="fleetlogic">
-                <div className="midnight-pillar-num">02</div>
-                <h3>FleetLogic™ Live GPS CAD</h3>
-                <p>
-                  Real-time recovery unit telemetry, multi-stop priority sequence reordering
-                  (1P → 1D → 2P → 2D), night-shift overtime payroll, and subcontractor outsourcing.
-                </p>
-              </article>
-
-              <article className="midnight-pillar-card" id="insurers">
-                <div className="midnight-pillar-num">03</div>
-                <h3>Multi-Policy Insurer Quota Engine</h3>
-                <p>
-                  1:N customer-to-policy management across Allianz, Bankers, AXA, Medgulf,
-                  Fidelity, and LIA with sequential quota tier &amp; cooldown enforcement.
-                </p>
-              </article>
-            </div>
-          </div>
-        </section>
       </div>
     );
   }
@@ -2724,56 +2535,85 @@ export default function App() {
   return (
     <div className="app-shell">
       {/* Modern Obsidian Command Top Navbar */}
-      <header className="o-main-navbar">
+      <header className="o-main-navbar" ref={navHeaderRef}>
         <div className="o-navbar-left">
-          <div className="o-app-brand">
-            <span className="tracker-mini-emblem" aria-hidden="true">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M12 3a9 9 0 1 0 9 9"
-                  stroke="currentColor"
-                  strokeWidth="2.6"
-                  strokeLinecap="round"
-                />
-                <circle cx="18.5" cy="5.5" r="2.5" fill="currentColor" />
-              </svg>
-            </span>
-            <span className="o-brand-wordmark">
-              TRACKER <em>Connect™</em>
-            </span>
-            <span className="o-app-brand-badge">CAD OS</span>
+          <div className="o-brand-mobile-row">
+            <div className="o-app-brand">
+              <span className="tracker-mini-emblem" aria-hidden="true">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M12 3a9 9 0 1 0 9 9"
+                    stroke="currentColor"
+                    strokeWidth="2.6"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="18.5" cy="5.5" r="2.5" fill="currentColor" />
+                </svg>
+              </span>
+              <span className="o-brand-wordmark">
+                TRACKER <em>Connect™</em>
+              </span>
+              <span className="o-app-brand-badge">CAD OS</span>
+            </div>
+
+            <div className="o-mobile-header-actions">
+              <button
+                type="button"
+                className="btn-incoming-call btn-cti-compact"
+                onClick={() => {
+                  setActiveTab('intake');
+                  setMobileNavOpen(false);
+                }}
+                aria-label="New Call Intake"
+              >
+                <span className="cti-live-dot" aria-hidden="true"></span>
+                <span>+ Intake</span>
+              </button>
+              <button
+                type="button"
+                className={mobileNavOpen ? 'mobile-menu-toggle active' : 'mobile-menu-toggle'}
+                aria-expanded={mobileNavOpen}
+                aria-label="Toggle navigation menu"
+                onClick={() => setMobileNavOpen(prev => !prev)}
+              >
+                {mobileNavOpen ? '✕' : '☰'}
+              </button>
+            </div>
           </div>
 
-          <nav className="o-menu-sections">
-            <button
+          <nav className={mobileNavOpen ? 'o-menu-sections mobile-open' : 'o-menu-sections'} aria-label="Main workspace navigation">
+            <button type="button"
               className={activeTab === 'map' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => {
                 setCustPolDropdownOpen(false);
                 setOpsBillingDropdownOpen(false);
                 setConfigDropdownOpen(false);
                 setActiveTab('map');
+                        setMobileNavOpen(false);
               }}
             >
               Live Fleet Map
             </button>
-            <button
+            <button type="button"
               className={activeTab === 'queue' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => {
                 setCustPolDropdownOpen(false);
                 setOpsBillingDropdownOpen(false);
                 setConfigDropdownOpen(false);
                 setActiveTab('queue');
+                        setMobileNavOpen(false);
               }}
             >
               Dispatch Board
             </button>
-            <button
+            <button type="button"
               className={activeTab === 'intake' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => {
                 setCustPolDropdownOpen(false);
                 setOpsBillingDropdownOpen(false);
                 setConfigDropdownOpen(false);
                 setActiveTab('intake');
+                        setMobileNavOpen(false);
               }}
             >
               Call Desk
@@ -2781,7 +2621,7 @@ export default function App() {
 
             {/* Customers & Policies Dropdown */}
             <div className="o-nav-dropdown-wrap">
-              <button
+              <button type="button"
                 className={
                   activeTab === 'customers' || activeTab === 'policies'
                     ? 'o-nav-link active'
@@ -2792,6 +2632,8 @@ export default function App() {
                   setConfigDropdownOpen(false);
                   setCustPolDropdownOpen(prev => !prev);
                 }}
+                aria-haspopup="menu"
+                aria-expanded={custPolDropdownOpen}
               >
                 Customers &amp; Policies ▾
               </button>
@@ -2802,6 +2644,7 @@ export default function App() {
                     className={activeTab === 'customers' ? 'o-dropdown-item active' : 'o-dropdown-item'}
                     onClick={() => {
                       setActiveTab('customers');
+                        setMobileNavOpen(false);
                       setCustomerViewMode('list');
                       setCustPolDropdownOpen(false);
                     }}
@@ -2814,6 +2657,7 @@ export default function App() {
                     className={activeTab === 'policies' ? 'o-dropdown-item active' : 'o-dropdown-item'}
                     onClick={() => {
                       setActiveTab('policies');
+                        setMobileNavOpen(false);
                       setPolicyViewMode('list');
                       setCustPolDropdownOpen(false);
                     }}
@@ -2827,7 +2671,7 @@ export default function App() {
 
             {/* Billing & Tariffs Dropdown */}
             <div className="o-nav-dropdown-wrap">
-              <button
+              <button type="button"
                 className={
                   activeTab === 'tariffs' || activeTab === 'billing'
                     ? 'o-nav-link active'
@@ -2838,6 +2682,8 @@ export default function App() {
                   setConfigDropdownOpen(false);
                   setOpsBillingDropdownOpen(prev => !prev);
                 }}
+                aria-haspopup="menu"
+                aria-expanded={opsBillingDropdownOpen}
               >
                 Billing &amp; Tariffs ▾
               </button>
@@ -2848,6 +2694,7 @@ export default function App() {
                     className={activeTab === 'billing' ? 'o-dropdown-item active' : 'o-dropdown-item'}
                     onClick={() => {
                       setActiveTab('billing');
+                        setMobileNavOpen(false);
                       setInvoiceViewMode('list');
                       setOpsBillingDropdownOpen(false);
                     }}
@@ -2860,6 +2707,7 @@ export default function App() {
                     className={activeTab === 'tariffs' ? 'o-dropdown-item active' : 'o-dropdown-item'}
                     onClick={() => {
                       setActiveTab('tariffs');
+                        setMobileNavOpen(false);
                       setTariffViewMode('list');
                       setOpsBillingDropdownOpen(false);
                     }}
@@ -2871,37 +2719,35 @@ export default function App() {
               )}
             </div>
 
-            <button
+            <button type="button"
               className={activeTab === 'concurrency' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => {
                 setCustPolDropdownOpen(false);
                 setOpsBillingDropdownOpen(false);
                 setConfigDropdownOpen(false);
                 setActiveTab('concurrency');
+                        setMobileNavOpen(false);
               }}
             >
               System Integrity
             </button>
-            <button
+            <button type="button"
               className={activeTab === 'performance' ? 'o-nav-link active' : 'o-nav-link'}
               onClick={() => {
                 setCustPolDropdownOpen(false);
                 setOpsBillingDropdownOpen(false);
                 setConfigDropdownOpen(false);
                 setActiveTab('performance');
+                        setMobileNavOpen(false);
               }}
             >
               Dispatch Archive
             </button>
 
             {/* Configuration Hub Dropdown: Users, User Groups, Tow Trucks & Drivers */}
-            {(currentUser.canManageUsers ||
-              currentUser.canManageFleet ||
-              currentUser.accessRole === 'ADMIN' ||
-              currentUser.accessRole === 'Admin' ||
-              currentUser.username === 'assaad.khalife') && (
+            {(currentUser.canManageUsers || currentUser.canManageFleet) && (
               <div className="o-nav-dropdown-wrap">
-                <button
+                <button type="button"
                   className={
                     activeTab === 'users' ||
                     activeTab === 'groups' ||
@@ -2915,15 +2761,14 @@ export default function App() {
                     setOpsBillingDropdownOpen(false);
                     setConfigDropdownOpen(prev => !prev);
                   }}
+                  aria-haspopup="menu"
+                  aria-expanded={configDropdownOpen}
                 >
                   Configuration ▾
                 </button>
                 {configDropdownOpen && (
-                  <div className="o-nav-dropdown-menu">
-                    {(currentUser.canManageUsers ||
-                      currentUser.accessRole === 'ADMIN' ||
-                      currentUser.accessRole === 'Admin' ||
-                      currentUser.username === 'assaad.khalife') && (
+                  <div className="o-nav-dropdown-menu o-nav-dropdown-right">
+                    {Boolean(currentUser.canManageUsers) && (
                       <>
                         <button
                           type="button"
@@ -2932,6 +2777,7 @@ export default function App() {
                             setConfigSearch('');
                             setUserViewMode('list');
                             setActiveTab('users');
+                        setMobileNavOpen(false);
                             setConfigDropdownOpen(false);
                           }}
                         >
@@ -2945,6 +2791,7 @@ export default function App() {
                             setConfigSearch('');
                             setGroupViewMode('list');
                             setActiveTab('groups');
+                        setMobileNavOpen(false);
                             setConfigDropdownOpen(false);
                           }}
                         >
@@ -2960,6 +2807,7 @@ export default function App() {
                         setConfigSearch('');
                         setTruckViewMode('list');
                         setActiveTab('trucks');
+                        setMobileNavOpen(false);
                         setConfigDropdownOpen(false);
                       }}
                     >
@@ -2973,6 +2821,7 @@ export default function App() {
                         setConfigSearch('');
                         setDriverViewMode('list');
                         setActiveTab('drivers');
+                        setMobileNavOpen(false);
                         setConfigDropdownOpen(false);
                       }}
                     >
@@ -2983,17 +2832,26 @@ export default function App() {
                 )}
               </div>
             )}
+                <div className="o-mobile-nav-footer">
+              <div className="o-systray-pill">
+                <span>{currentUser.fullName}</span>
+                <strong>{currentUser.groupName || currentUser.accessRole || currentUser.stationCode}</strong>
+              </div>
+              <button
+                type="button"
+                className="btn-signout-nav"
+                onClick={handleLogout}
+              >
+                Sign Out
+              </button>
+            </div>
           </nav>
         </div>
 
         <div className="o-navbar-systray">
-          <button className="btn-incoming-call" onClick={triggerIncomingCall}>
-            <span className="cti-live-dot" aria-hidden="true"></span>
-            Incoming CTI Line
-          </button>
-          <div className="o-systray-pill" title={`SESSION_CONTEXT AppUsername: ${currentUser.username}`}>
+          <div className="o-systray-pill" title={`Signed in as ${currentUser.username} (${currentUser.stationCode})`}>
             <span>{currentUser.fullName}</span>
-            <strong>{currentUser.groupName || currentUser.accessRole || currentUser.stationCode}</strong>
+            <strong>{currentUser.groupName || currentUser.stationCode}</strong>
           </div>
           <button
             type="button"
@@ -3036,10 +2894,7 @@ export default function App() {
               activeTab === 'drivers') && (
               <div className="action-btn-group">
                 <div className="config-subnav-pills">
-                  {(currentUser.canManageUsers ||
-                    currentUser.accessRole === 'ADMIN' ||
-                    currentUser.accessRole === 'Admin' ||
-                    currentUser.username === 'assaad.khalife') && (
+                  {Boolean(currentUser.canManageUsers) && (
                     <>
                       <button
                         type="button"
@@ -3216,7 +3071,7 @@ export default function App() {
               activeTab !== 'drivers' &&
               activeTab !== 'tariffs' &&
               activeTab !== 'billing' && (
-                <button
+                <button type="button"
                   className="btn-erp-primary"
                   onClick={() => setActiveTab('intake')}
                 >
@@ -3301,7 +3156,7 @@ export default function App() {
               <button
                 type="button"
                 className={changeLogOpen ? 'btn-erp-primary' : 'btn-erp-secondary'}
-                style={{ marginLeft: '8px' }}
+                
                 onClick={() => setChangeLogOpen(prev => !prev)}
                 title={`View ${CHANGE_LOG_SECTIONS[activeTab]} section change log`}
               >
@@ -3319,41 +3174,7 @@ export default function App() {
             <strong>{toast.title}</strong>
             <p>{toast.message}</p>
           </div>
-          <button aria-label="Dismiss notification" onClick={() => setToast(null)}>×</button>
-        </div>
-      )}
-
-      {/* Incoming Phone Call Modal (Only passes Caller Phone Number) */}
-      {incomingCallModal && (
-        <div className="modal-backdrop">
-          <div className="modal-box incoming-call-modal" role="dialog" aria-modal="true" aria-labelledby="incoming-call-title">
-            <div className="incoming-call-ring-badge">INCOMING EMERGENCY CALL</div>
-            <h3 id="incoming-call-title">Incoming Caller Number</h3>
-            <div className="form-row" style={{ marginTop: '8px' }}>
-              <label>Caller Phone Number</label>
-              <input
-                type="text"
-                value={incomingCallModal.phone}
-                onChange={e =>
-                  setIncomingCallModal({ ...incomingCallModal, phone: e.target.value })
-                }
-              />
-            </div>
-            <p className="muted" style={{ marginTop: '6px' }}>
-              Answering will open Call Intake with only the caller phone number filled.
-            </p>
-            <div className="modal-actions">
-              <button
-                className="btn-primary"
-                onClick={() => acceptIncomingCall(incomingCallModal.phone)}
-              >
-                Answer Call
-              </button>
-              <button className="btn-secondary" onClick={() => setIncomingCallModal(null)}>
-                Decline
-              </button>
-            </div>
-          </div>
+          <button type="button" aria-label="Dismiss notification" onClick={() => setToast(null)}>×</button>
         </div>
       )}
 
@@ -3367,7 +3188,7 @@ export default function App() {
               <div className="warning-modal-sub">{policyWarningModal.reason}</div>
             )}
             <div className="modal-actions">
-              <button className="btn-primary" onClick={() => setPolicyWarningModal(null)}>
+              <button type="button" className="btn-primary" onClick={() => setPolicyWarningModal(null)}>
                 Understood (Proceed as Pending / Direct Billing)
               </button>
             </div>
@@ -3381,7 +3202,7 @@ export default function App() {
           <div className="modal-box" role="dialog" aria-modal="true" aria-labelledby="payment-modal-title">
             <div className="modal-header-row">
               <h3 id="payment-modal-title">
-                Record Payment Row • {paymentModalInvoice.invoiceNumber}
+                Record Invoice Payment • {paymentModalInvoice.invoiceNumber}
               </h3>
               <button
                 type="button"
@@ -3393,8 +3214,7 @@ export default function App() {
               </button>
             </div>
             <p className="muted" style={{ marginBottom: '12px' }}>
-              Each partial or full payment inserts a separate immutable row in{' '}
-              <code>dbo.InvoicePayments</code> linked to the payer (Insurer vs Customer).
+              Record a partial or full payment against either the Insurance Provider or Customer balance.
             </p>
             <div className="elig-metrics" style={{ marginBottom: '12px' }}>
               <div className="metric-item">
@@ -3407,7 +3227,7 @@ export default function App() {
               </div>
               <div className="metric-item">
                 <span>Current Status</span>
-                <strong>{paymentModalInvoice.invoiceStatus}</strong>
+                <strong>{formatLabel(paymentModalInvoice.invoiceStatus)}</strong>
               </div>
             </div>
 
@@ -3434,7 +3254,7 @@ export default function App() {
                     value="InsuranceProvider"
                     disabled={Number(paymentModalInvoice.insurerBalanceDue) <= 0}
                   >
-                    InsuranceProvider ({paymentModalInvoice.insuranceProviderName || 'No Insurer'}) — Due ${paymentModalInvoice.insurerBalanceDue}
+                    Insurance Provider ({paymentModalInvoice.insuranceProviderName || 'No Insurer'}) — Due ${paymentModalInvoice.insurerBalanceDue}
                   </option>
                   <option
                     value="Customer"
@@ -3463,9 +3283,9 @@ export default function App() {
                   value={paymentForm.paymentMethod}
                   onChange={e => setPaymentForm({ ...paymentForm, paymentMethod: e.target.value })}
                 >
-                  <option value="BankTransfer">BankTransfer</option>
-                  <option value="InsurerBatchSettlement">InsurerBatchSettlement</option>
-                  <option value="OnSceneCash">OnSceneCash</option>
+                  <option value="BankTransfer">Bank Transfer</option>
+                  <option value="InsurerBatchSettlement">Insurer Batch Settlement</option>
+                  <option value="OnSceneCash">On-Scene Cash</option>
                   <option value="Card">Card</option>
                   <option value="Cheque">Cheque</option>
                 </select>
@@ -3510,7 +3330,7 @@ export default function App() {
 
               <div className="modal-actions" style={{ marginTop: '14px' }}>
                 <button type="submit" className="btn-primary">
-                  Insert Payment Row
+                  Record Payment
                 </button>
                 <button
                   type="button"
@@ -3535,7 +3355,7 @@ export default function App() {
                   ? 'Pick Breakdown / Pickup Location'
                   : 'Pick Destination / Dropoff Location'}
               </h3>
-              <button
+              <button type="button"
                 className="btn-close"
                 aria-label="Close location picker"
                 onClick={() => setLocationPicker(prev => ({ ...prev, open: false }))}
@@ -3582,15 +3402,15 @@ export default function App() {
               <div>
                 <span className="muted">Resolved Locality: </span>
                 <strong>{locationPicker.resolvedPlaceName}</strong>
-                <span className="muted" style={{ marginLeft: '10px' }}>
+                <span className="muted picker-coords-inline">
                   ({locationPicker.lat}, {locationPicker.lng})
                 </span>
               </div>
               <div className="modal-actions">
-                <button className="btn-primary" onClick={confirmPickedLocation}>
+                <button type="button" className="btn-primary" onClick={confirmPickedLocation}>
                   Confirm Pin Location
                 </button>
-                <button
+                <button type="button"
                   className="btn-secondary"
                   onClick={() => setLocationPicker(prev => ({ ...prev, open: false }))}
                 >
@@ -3654,20 +3474,15 @@ export default function App() {
         {/* TAB 1: LIVE GOOGLE MAPS CAD & FLEET PRIORITY QUEUE */}
         {activeTab === 'map' && (
           <div className="cad-map-stage">
-            {/* Floating Top-Left Bar (Exact erp CAD Map Style) */}
+            {/* Floating Top-Left Bar (Status Legend) */}
             <div className="cad-floating-topbar">
               <h2>Live Towing CAD</h2>
               <span className="badge badge-Available">Available</span>
-              <span className="badge badge-InProgress">En-Route</span>
+              <span className="badge badge-InProgress">En Route</span>
+              <span className="badge badge-Towing">Towing</span>
               <span className="badge badge-PendingInsurance">Pending</span>
-              <button
-                className={trafficEnabled ? 'btn-traffic active' : 'btn-traffic'}
-                onClick={() => setTrafficEnabled(prev => !prev)}
-              >
-                {trafficEnabled ? 'Live Traffic: ON' : 'Traffic'}
-              </button>
               {(selectedMapTruckId || selectedMapJobId) && (
-                <button
+                <button type="button"
                   className="btn-xs"
                   onClick={() => {
                     setSelectedMapTruckId(null);
@@ -3681,7 +3496,7 @@ export default function App() {
 
             {/* Floating Top-Right Button to Open Fleet & Jobs Drawer */}
             {!drawerOpen && (
-              <button
+              <button type="button"
                 className="cad-floating-btn"
                 onClick={() => setDrawerOpen(true)}
               >
@@ -3694,7 +3509,6 @@ export default function App() {
               centerLng={BEIRUT_LNG}
               initialZoom={11}
               flyToTarget={mapFlyToTarget}
-              trafficEnabled={trafficEnabled}
               trucks={dashboard?.trucks || []}
               priorityQueue={dashboard?.priorityQueue || []}
               activeJobs={ongoingJobs}
@@ -3741,7 +3555,7 @@ export default function App() {
               <aside className="cad-slide-drawer">
                 <div className="drawer-header">
                   <h3>Fleet &amp; Ongoing Jobs</h3>
-                  <button
+                  <button type="button"
                     className="close-drawer-btn"
                     onClick={() => setDrawerOpen(false)}
                     title="Close Drawer"
@@ -3751,13 +3565,13 @@ export default function App() {
                   </button>
                 </div>
                 <div className="drawer-subtabs">
-                  <button
+                  <button type="button"
                     className={drawerTab === 'trucks' ? 'subtab active' : 'subtab'}
                     onClick={() => setDrawerTab('trucks')}
                   >
                     All Trucks ({dashboard?.trucks?.length || 0})
                   </button>
-                  <button
+                  <button type="button"
                     className={drawerTab === 'jobs' ? 'subtab active' : 'subtab'}
                     onClick={() => setDrawerTab('jobs')}
                   >
@@ -3787,6 +3601,7 @@ export default function App() {
                               zoom: 13,
                               ts: Date.now()
                             });
+                            if (window.innerWidth <= 860) setDrawerOpen(false);
                           }}
                         >
                           <div className="truck-card-top">
@@ -3794,7 +3609,7 @@ export default function App() {
                               {t.truckCode} ({t.licensePlate})
                             </strong>
                             <span className={`badge badge-${t.fleetStatus}`}>
-                              {t.fleetStatus}
+                              {formatLabel(t.fleetStatus)}
                             </span>
                           </div>
                           <div className="truck-card-body">
@@ -3802,14 +3617,14 @@ export default function App() {
                               Driver: <strong>{t.driverName}</strong> ({t.driverPhone})
                             </div>
                             <div>
-                              Active Queue: <strong>{truckJobs.length} stops</strong> | Salary: $
-                              {t.baseMonthlySalary}
+                              Active Queue: <strong>{truckJobs.length} stops</strong> • Unit:{' '}
+                              <span>{t.truckModel || 'Recovery Flatbed'}</span>
                             </div>
                             <div
                               className="truck-action-row"
                               onClick={e => e.stopPropagation()}
                             >
-                              <button
+                              <button type="button"
                                 className="btn-xs"
                                 onClick={() => {
                                   setSelectedMapTruckId(t.truckId);
@@ -3819,11 +3634,12 @@ export default function App() {
                                     zoom: 14,
                                     ts: Date.now()
                                   });
+                                  if (window.innerWidth <= 860) setDrawerOpen(false);
                                 }}
                               >
                                 Locate
                               </button>
-                              <button
+                              <button type="button"
                                 className="btn-xs"
                                 onClick={() =>
                                   setStopQueueTruckId(
@@ -3857,20 +3673,20 @@ export default function App() {
                                         </div>
                                       </div>
                                       <div className="reorder-btns">
-                                        <button
+                                        <button type="button"
                                           className="btn-xs"
                                           disabled={idx === 0}
-                                          title="Move Earlier"
+                                          title="Move Earlier" aria-label="Move stop earlier"
                                           onClick={() =>
                                             handleReorderQueue(t.truckId, job.towRequestId, 'up')
                                           }
                                         >
                                           ▲
                                         </button>
-                                        <button
+                                        <button type="button"
                                           className="btn-xs"
                                           disabled={idx === truckJobs.length - 1}
-                                          title="Move Later"
+                                          title="Move Later" aria-label="Move stop later"
                                           onClick={() =>
                                             handleReorderQueue(
                                               t.truckId,
@@ -3912,11 +3728,12 @@ export default function App() {
                               zoom: 13,
                               ts: Date.now()
                             });
+                            if (window.innerWidth <= 860) setDrawerOpen(false);
                           }}
                         >
                           <div className="truck-card-top">
                             <strong>{r.requestNumber}</strong>
-                            <span className={`badge badge-${r.status}`}>{r.status}</span>
+                            <span className={`badge badge-${r.status}`}>{formatLabel(r.status)}</span>
                           </div>
                           <div className="truck-card-body">
                             <div>
@@ -4190,7 +4007,7 @@ export default function App() {
                           }
                         }}
                       >
-                        <option value="">+ New / Unlisted Vehicle (Auto-Register in dbo.Vehicles)</option>
+                        <option value="">+ New / Unlisted Vehicle (Auto-Register)</option>
                         {customerVehicles.map(v => (
                           <option key={v.vehicleId} value={v.vehicleId}>
                             {v.vehiclePlate} — {v.vehicleModel}
@@ -4212,7 +4029,7 @@ export default function App() {
                                 setSelectedVehicleId('');
                                 setIntakeForm({ ...intakeForm, plateCodeId: e.target.value });
                               }}
-                              style={{ width: '130px', flexShrink: 0 }}
+                              className="plate-code-select"
                               required={!intakeForm.noPlate}
                             >
                               {dashboard?.plateCodes?.map(pc => (
@@ -4435,7 +4252,7 @@ export default function App() {
                     <label>Straight-Line Geodesic</label>
                     <div className="erp-field-val">
                       <span className="muted">
-                        {eligibility?.straightLineDistanceKm ?? 0} KM (Haversine air distance — NOT billed)
+                        {eligibility?.straightLineDistanceKm ?? 0} KM (Straight-line air distance — not billed)
                       </span>
                     </div>
                   </div>
@@ -4445,7 +4262,7 @@ export default function App() {
                     <div className="erp-field-val">
                       <strong>{eligibility?.calculatedRoadKm ?? 0} KM</strong>{' '}
                       <span className="badge badge-Approved" style={{ marginLeft: '6px' }}>
-                        {eligibility?.distanceSource || 'OSRM_DrivingRoute'}
+                        {formatLabel(eligibility?.distanceSource || 'OSRM_DrivingRoute')}
                       </span>
                       {eligibility?.routeDurationMinutes ? (
                         <span className="muted" style={{ marginLeft: '6px' }}>
@@ -4492,7 +4309,7 @@ export default function App() {
                   <div className="erp-group-header">TARIFF SNAPSHOT &amp; SPLIT OBLIGATIONS</div>
 
                   <div className="erp-field-row">
-                    <label>Active Tariff (dbo.Tariffs)</label>
+                    <label>Active Service Tariff</label>
                     <div className="erp-field-val">
                       <span>
                         <strong>{eligibility?.tariffCode || '—'}</strong> (Base $
@@ -4607,7 +4424,7 @@ export default function App() {
                           <span className="erp-readonly-text">
                             {dashboard?.trucks?.find(
                               t => t.truckId === Number(intakeForm.assignedTruckId)
-                            )?.driverName || 'Auto-assigned via DriverTruckAssignments'}
+                            )?.driverName || 'Auto-assigned from active truck shift'}
                           </span>
                         </div>
                       </div>
@@ -4615,7 +4432,7 @@ export default function App() {
                   ) : (
                     <>
                       <div className="erp-field-row">
-                        <label>Subcontractor (dbo.Subcontractors)</label>
+                        <label>Partner Subcontractor</label>
                         <div className="erp-field-val">
                           <select
                             value={intakeForm.subcontractorId}
@@ -4759,40 +4576,42 @@ export default function App() {
                       />
                     </div>
                   ) : (
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Seq</th>
-                          <th>Coverage Type</th>
-                          <th>Used / Allowed</th>
-                          <th>Remaining</th>
-                          <th>Max Dist (KM)</th>
-                          <th>Min Days Between Tows</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedPolicyTiers.map(tier => (
-                          <tr key={tier.quotaTierId}>
-                            <td>#{tier.tierSequence}</td>
-                            <td>
-                              <strong>{tier.coverageType}</strong>
-                            </td>
-                            <td>
-                              {tier.usedTows} / {tier.allowedTows}
-                            </td>
-                            <td>
-                              <strong
-                                className={tier.remainingTows <= 0 ? 'text-red' : 'text-green'}
-                              >
-                                {tier.remainingTows}
-                              </strong>
-                            </td>
-                            <td>{tier.maxDistanceKm} KM</td>
-                            <td>{tier.minIntervalDays} days</td>
+                    <div className="table-scroll">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Seq</th>
+                            <th>Coverage Type</th>
+                            <th>Used / Allowed</th>
+                            <th>Remaining</th>
+                            <th>Max Dist (KM)</th>
+                            <th>Min Days Between Tows</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {selectedPolicyTiers.map(tier => (
+                            <tr key={tier.quotaTierId}>
+                              <td>#{tier.tierSequence}</td>
+                              <td>
+                                <strong>{tier.coverageType}</strong>
+                              </td>
+                              <td>
+                                {tier.usedTows} / {tier.allowedTows}
+                              </td>
+                              <td>
+                                <strong
+                                  className={tier.remainingTows <= 0 ? 'text-red' : 'text-green'}
+                                >
+                                  {tier.remainingTows}
+                                </strong>
+                              </td>
+                              <td>{tier.maxDistanceKm} KM</td>
+                              <td>{tier.minIntervalDays} days</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
               </div>
@@ -4818,81 +4637,83 @@ export default function App() {
                   </div>
                 </div>
 
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Customer Full Name</th>
-                      <th>Phone Number</th>
-                      <th>Email Address</th>
-                      <th>Linked Insurance Policies</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {customersList
-                      .filter(c => {
-                        const q = customerSearch.trim().toLowerCase();
-                        if (!q) return true;
-                        return (
-                          c.fullName.toLowerCase().includes(q) ||
-                          c.phone.toLowerCase().includes(q) ||
-                          (c.email || '').toLowerCase().includes(q)
-                        );
-                      })
-                      .map(c => (
-                        <tr
-                          key={c.customerId}
-                          style={{ cursor: 'pointer' }}
-                          onClick={() => {
-                            handleSelectCustomer(c.customerId);
-                            setCustomerViewMode('form');
-                          }}
-                        >
-                          <td>#{c.customerId}</td>
-                          <td>
-                            <strong>{c.fullName}</strong>
-                          </td>
-                          <td>{c.phone}</td>
-                          <td>{c.email || '—'}</td>
-                          <td>
-                            <span className="badge badge-Approved">
-                              {c.policyCount} {c.policyCount === 1 ? 'Policy' : 'Policies'}
-                            </span>
-                          </td>
-                          <td onClick={e => e.stopPropagation()}>
-                            <div className="action-btn-group">
-                              <button
-                                type="button"
-                                className="btn-xs"
-                                onClick={() => {
-                                  handleSelectCustomer(c.customerId);
-                                  setCustomerViewMode('form');
-                                }}
-                              >
-                                View Customer
-                              </button>
-                              <button
-                                type="button"
-                                className="btn-xs"
-                                onClick={() => {
-                                  handleSelectCustomer(c.customerId);
-                                  setNewPolicyForm(prev => ({
-                                    ...prev,
-                                    customerId: c.customerId
-                                  }));
-                                  setActiveTab('policies');
-                                  setPolicyViewMode('new');
-                                }}
-                              >
-                                + Add Policy
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Customer Full Name</th>
+                        <th>Phone Number</th>
+                        <th>Email Address</th>
+                        <th>Linked Insurance Policies</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customersList
+                        .filter(c => {
+                          const q = customerSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            c.fullName.toLowerCase().includes(q) ||
+                            c.phone.toLowerCase().includes(q) ||
+                            (c.email || '').toLowerCase().includes(q)
+                          );
+                        })
+                        .map(c => (
+                          <tr
+                            key={c.customerId}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => {
+                              handleSelectCustomer(c.customerId);
+                              setCustomerViewMode('form');
+                            }}
+                          >
+                            <td>#{c.customerId}</td>
+                            <td>
+                              <strong>{c.fullName}</strong>
+                            </td>
+                            <td>{c.phone}</td>
+                            <td>{c.email || '—'}</td>
+                            <td>
+                              <span className="badge badge-Approved">
+                                {c.policyCount} {c.policyCount === 1 ? 'Policy' : 'Policies'}
+                              </span>
+                            </td>
+                            <td onClick={e => e.stopPropagation()}>
+                              <div className="action-btn-group">
+                                <button
+                                  type="button"
+                                  className="btn-xs"
+                                  onClick={() => {
+                                    handleSelectCustomer(c.customerId);
+                                    setCustomerViewMode('form');
+                                  }}
+                                >
+                                  View Customer
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-xs"
+                                  onClick={() => {
+                                    handleSelectCustomer(c.customerId);
+                                    setNewPolicyForm(prev => ({
+                                      ...prev,
+                                      customerId: c.customerId
+                                    }));
+                                    setActiveTab('policies');
+                                    setPolicyViewMode('new');
+                                  }}
+                                >
+                                  + Add Policy
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -4950,13 +4771,13 @@ export default function App() {
                     </button>
                   </div>
                   <div className="o-statusbar-status">
-                    <span className="o-stage-pill current">Active 3NF Customer</span>
+                    <span className="o-stage-pill current">Active Customer Account</span>
                   </div>
                 </div>
 
                 <div className="erp-sheet-pad">
                   <div className="erp-oe-title">
-                    <span className="erp-oe-label">dbo.Customers Record #{selectedCustomerObj.customerId}</span>
+                    <span className="erp-oe-label">Customer Account #{selectedCustomerObj.customerId}</span>
                     <h1>{selectedCustomerObj.fullName}</h1>
                   </div>
 
@@ -5009,7 +4830,7 @@ export default function App() {
                   ) : (
                     <div className="erp-group-grid">
                       <div className="erp-group-col">
-                        <div className="erp-group-header">CONTACT INFORMATION (dbo.Customers)</div>
+                        <div className="erp-group-header">CONTACT INFORMATION</div>
                         <div className="erp-field-row">
                           <label>Full Name</label>
                           <div className="erp-field-val">
@@ -5031,7 +4852,7 @@ export default function App() {
                       </div>
 
                       <div className="erp-group-col">
-                        <div className="erp-group-header">RELATED 3NF PORTFOLIO</div>
+                        <div className="erp-group-header">LINKED PORTFOLIO</div>
                         <div className="erp-field-row">
                           <label>Linked Policies</label>
                           <div className="erp-field-val">
@@ -5080,134 +4901,140 @@ export default function App() {
                     </div>
                     <div className="erp-notebook-page">
                       {customerNotebookTab === 'policies' && (
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th>Policy Number</th>
-                              <th>Insurance Provider</th>
-                              <th>Start Date</th>
-                              <th>Expiration Date</th>
-                              <th>Covered Distance (KM)</th>
-                              <th>Status</th>
-                              <th>Action</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {customerPolicies.map(p => (
-                              <tr
-                                key={p.policyId}
-                                className="clickable-row"
-                                onClick={() => openPolicyRecord(p.policyId)}
-                              >
-                                <td>
-                                  <strong>{p.policyNumber}</strong>
-                                </td>
-                                <td>{p.providerName}</td>
-                                <td>{p.startDate}</td>
-                                <td>{p.expirationDate}</td>
-                                <td>{p.defaultAllowedKm} KM</td>
-                                <td>
-                                  <span className="badge badge-Done">{p.policyStatus}</span>
-                                </td>
-                                <td onClick={e => e.stopPropagation()}>
-                                  <button
-                                    type="button"
-                                    className="btn-xs"
-                                    onClick={() => openPolicyRecord(p.policyId)}
-                                  >
-                                    Open Policy &amp; Quotas
-                                  </button>
-                                </td>
+                        <div className="table-scroll">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Policy Number</th>
+                                <th>Insurance Provider</th>
+                                <th>Start Date</th>
+                                <th>Expiration Date</th>
+                                <th>Covered Distance (KM)</th>
+                                <th>Status</th>
+                                <th>Action</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {customerPolicies.map(p => (
+                                <tr
+                                  key={p.policyId}
+                                  className="clickable-row"
+                                  onClick={() => openPolicyRecord(p.policyId)}
+                                >
+                                  <td>
+                                    <strong>{p.policyNumber}</strong>
+                                  </td>
+                                  <td>{p.providerName}</td>
+                                  <td>{p.startDate}</td>
+                                  <td>{p.expirationDate}</td>
+                                  <td>{p.defaultAllowedKm} KM</td>
+                                  <td>
+                                    <span className="badge badge-Done">{p.policyStatus}</span>
+                                  </td>
+                                  <td onClick={e => e.stopPropagation()}>
+                                    <button
+                                      type="button"
+                                      className="btn-xs"
+                                      onClick={() => openPolicyRecord(p.policyId)}
+                                    >
+                                      Open Policy &amp; Quotas
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       )}
 
                       {customerNotebookTab === 'vehicles' && (
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th>Vehicle ID</th>
-                              <th>License Plate</th>
-                              <th>Vehicle Model</th>
-                              <th>Plate Registration Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(dashboard?.vehicles || [])
-                              .filter(v => v.customerId === selectedCustomerObj.customerId)
-                              .map(v => (
-                                <tr key={v.vehicleId}>
-                                  <td>#{v.vehicleId}</td>
-                                  <td>
-                                    <code>{v.vehiclePlate}</code>
-                                  </td>
-                                  <td>
-                                    <strong>{v.vehicleModel}</strong>
-                                  </td>
-                                  <td>
-                                    {v.noPlate ? (
-                                      <span className="badge badge-PendingInsurance">Unregistered Showroom (NoPlate=1)</span>
-                                    ) : (
-                                      <span className="badge badge-Done">Registered Plate</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                          </tbody>
-                        </table>
+                        <div className="table-scroll">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Vehicle ID</th>
+                                <th>License Plate</th>
+                                <th>Vehicle Model</th>
+                                <th>Plate Registration Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(dashboard?.vehicles || [])
+                                .filter(v => v.customerId === selectedCustomerObj.customerId)
+                                .map(v => (
+                                  <tr key={v.vehicleId}>
+                                    <td>#{v.vehicleId}</td>
+                                    <td>
+                                      <code>{v.vehiclePlate}</code>
+                                    </td>
+                                    <td>
+                                      <strong>{v.vehicleModel}</strong>
+                                    </td>
+                                    <td>
+                                      {v.noPlate ? (
+                                        <span className="badge badge-PendingInsurance">Unregistered / Showroom Vehicle</span>
+                                      ) : (
+                                        <span className="badge badge-Done">Registered Plate</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
                       )}
 
                       {customerNotebookTab === 'tows' && (
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th>Request #</th>
-                              <th>Vehicle</th>
-                              <th>Issue Type</th>
-                              <th>Road Distance</th>
-                              <th>Status</th>
-                              <th>Linked Invoice</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(dashboard?.recentRequests || [])
-                              .filter(r => r.customerId === selectedCustomerObj.customerId)
-                              .map(r => (
-                                <tr
-                                  key={r.towRequestId}
-                                  className="clickable-row"
-                                  onClick={() => openTowRequestRecord(r.towRequestId)}
-                                >
-                                  <td>
-                                    <strong>{r.requestNumber}</strong>
-                                  </td>
-                                  <td>
-                                    <code>{r.vehiclePlate}</code> — {r.vehicleModel}
-                                  </td>
-                                  <td>{r.issueType}</td>
-                                  <td>{r.actualDistanceKm} km</td>
-                                  <td>
-                                    <span className={`badge badge-${r.status}`}>{r.status}</span>
-                                  </td>
-                                  <td onClick={e => e.stopPropagation()}>
-                                    {r.invoiceId > 0 ? (
-                                      <button
-                                        type="button"
-                                        className="rel-entity-link"
-                                        onClick={() => openInvoiceRecord(r.invoiceId)}
-                                      >
-                                        Invoice #{r.invoiceId} ({r.invoiceStatus})
-                                      </button>
-                                    ) : (
-                                      '—'
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                          </tbody>
-                        </table>
+                        <div className="table-scroll">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Request #</th>
+                                <th>Vehicle</th>
+                                <th>Issue Type</th>
+                                <th>Road Distance</th>
+                                <th>Status</th>
+                                <th>Linked Invoice</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(dashboard?.recentRequests || [])
+                                .filter(r => r.customerId === selectedCustomerObj.customerId)
+                                .map(r => (
+                                  <tr
+                                    key={r.towRequestId}
+                                    className="clickable-row"
+                                    onClick={() => openTowRequestRecord(r.towRequestId)}
+                                  >
+                                    <td>
+                                      <strong>{r.requestNumber}</strong>
+                                    </td>
+                                    <td>
+                                      <code>{r.vehiclePlate}</code> — {r.vehicleModel}
+                                    </td>
+                                    <td>{r.issueType}</td>
+                                    <td>{r.actualDistanceKm} km</td>
+                                    <td>
+                                      <span className={`badge badge-${r.status}`}>{formatLabel(r.status)}</span>
+                                    </td>
+                                    <td onClick={e => e.stopPropagation()}>
+                                      {r.invoiceId > 0 ? (
+                                        <button
+                                          type="button"
+                                          className="rel-entity-link"
+                                          onClick={() => openInvoiceRecord(r.invoiceId)}
+                                        >
+                                          Invoice #{r.invoiceId} ({formatLabel(r.invoiceStatus)})
+                                        </button>
+                                      ) : (
+                                        '—'
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
                       )}
                     </div>
                     {renderInlineRecordChatter(selectedCustomerObj.fullName)}
@@ -5322,103 +5149,105 @@ export default function App() {
                   </div>
                 </div>
 
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Policy Number</th>
-                      <th>Customer</th>
-                      <th>Insurance Provider</th>
-                      <th>Expiration Date</th>
-                      <th>Covered Distance</th>
-                      <th>Mechanical Tows (Left / Allowed)</th>
-                      <th>Accident Tows (Left / Allowed)</th>
-                      <th>Status</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(dashboard?.policies || [])
-                      .filter(p => {
-                        const q = policySearch.trim().toLowerCase();
-                        if (!q) return true;
-                        return (
-                          p.policyNumber.toLowerCase().includes(q) ||
-                          p.customerName.toLowerCase().includes(q) ||
-                          (p.customerPhone || '').toLowerCase().includes(q) ||
-                          p.providerName.toLowerCase().includes(q)
-                        );
-                      })
-                      .map(p => {
-                        const tiers = p.tiers || [];
-                        const mechTiers = tiers.filter(
-                          t => t.coverageType === 'Mechanical' || t.coverageType === 'All'
-                        );
-                        const accTiers = tiers.filter(
-                          t => t.coverageType === 'Accident' || t.coverageType === 'All'
-                        );
-                        const allowMech = mechTiers.reduce((s, t) => s + t.allowedTows, 0);
-                        const leftMech = mechTiers.reduce((s, t) => s + t.remainingTows, 0);
-                        const allowAcc = accTiers.reduce((s, t) => s + t.allowedTows, 0);
-                        const leftAcc = accTiers.reduce((s, t) => s + t.remainingTows, 0);
-
-                        return (
-                          <tr
-                            key={p.policyId}
-                            style={{ cursor: 'pointer' }}
-                            onClick={() => {
-                              setSelectedCustomerId(p.customerId);
-                              setSelectedPolicyId(p.policyId);
-                              setPolicyViewMode('form');
-                            }}
-                          >
-                            <td>
-                              <strong>{p.policyNumber}</strong>
-                            </td>
-                            <td>
-                              {p.customerName} <span className="muted">({p.customerPhone})</span>
-                            </td>
-                            <td>{p.providerName}</td>
-                            <td>{p.expirationDate}</td>
-                            <td>{p.defaultAllowedKm} KM</td>
-                            <td>
-                              <strong className={leftMech <= 0 ? 'text-red' : 'text-green'}>
-                                {leftMech}
-                              </strong>{' '}
-                              / {allowMech}
-                            </td>
-                            <td>
-                              <strong className={leftAcc <= 0 ? 'text-red' : 'text-green'}>
-                                {leftAcc}
-                              </strong>{' '}
-                              / {allowAcc}
-                            </td>
-                            <td>
-                              <span
-                                className={`badge ${
-                                  p.policyStatus === 'Active' ? 'badge-Done' : 'badge-Rejected'
-                                }`}
-                              >
-                                {p.policyStatus}
-                              </span>
-                            </td>
-                            <td onClick={e => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                className="btn-xs"
-                                onClick={() => {
-                                  setSelectedCustomerId(p.customerId);
-                                  setSelectedPolicyId(p.policyId);
-                                  setPolicyViewMode('form');
-                                }}
-                              >
-                                Open Policy Sheet
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Policy Number</th>
+                        <th>Customer</th>
+                        <th>Insurance Provider</th>
+                        <th>Expiration Date</th>
+                        <th>Covered Distance</th>
+                        <th>Mechanical Tows (Left / Allowed)</th>
+                        <th>Accident Tows (Left / Allowed)</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(dashboard?.policies || [])
+                        .filter(p => {
+                          const q = policySearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            p.policyNumber.toLowerCase().includes(q) ||
+                            p.customerName.toLowerCase().includes(q) ||
+                            (p.customerPhone || '').toLowerCase().includes(q) ||
+                            p.providerName.toLowerCase().includes(q)
+                          );
+                        })
+                        .map(p => {
+                          const tiers = p.tiers || [];
+                          const mechTiers = tiers.filter(
+                            t => t.coverageType === 'Mechanical' || t.coverageType === 'All'
+                          );
+                          const accTiers = tiers.filter(
+                            t => t.coverageType === 'Accident' || t.coverageType === 'All'
+                          );
+                          const allowMech = mechTiers.reduce((s, t) => s + t.allowedTows, 0);
+                          const leftMech = mechTiers.reduce((s, t) => s + t.remainingTows, 0);
+                          const allowAcc = accTiers.reduce((s, t) => s + t.allowedTows, 0);
+                          const leftAcc = accTiers.reduce((s, t) => s + t.remainingTows, 0);
+  
+                          return (
+                            <tr
+                              key={p.policyId}
+                              style={{ cursor: 'pointer' }}
+                              onClick={() => {
+                                setSelectedCustomerId(p.customerId);
+                                setSelectedPolicyId(p.policyId);
+                                setPolicyViewMode('form');
+                              }}
+                            >
+                              <td>
+                                <strong>{p.policyNumber}</strong>
+                              </td>
+                              <td>
+                                {p.customerName} <span className="muted">({p.customerPhone})</span>
+                              </td>
+                              <td>{p.providerName}</td>
+                              <td>{p.expirationDate}</td>
+                              <td>{p.defaultAllowedKm} KM</td>
+                              <td>
+                                <strong className={leftMech <= 0 ? 'text-red' : 'text-green'}>
+                                  {leftMech}
+                                </strong>{' '}
+                                / {allowMech}
+                              </td>
+                              <td>
+                                <strong className={leftAcc <= 0 ? 'text-red' : 'text-green'}>
+                                  {leftAcc}
+                                </strong>{' '}
+                                / {allowAcc}
+                              </td>
+                              <td>
+                                <span
+                                  className={`badge ${
+                                    p.policyStatus === 'Active' ? 'badge-Done' : 'badge-Rejected'
+                                  }`}
+                                >
+                                  {p.policyStatus}
+                                </span>
+                              </td>
+                              <td onClick={e => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  className="btn-xs"
+                                  onClick={() => {
+                                    setSelectedCustomerId(p.customerId);
+                                    setSelectedPolicyId(p.policyId);
+                                    setPolicyViewMode('form');
+                                  }}
+                                >
+                                  Open Policy Sheet
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -5638,57 +5467,59 @@ export default function App() {
                             Quotas are consumed strictly in priority sequence order (e.g. 1st:
                             Mechanical Tows up to 50 KM, then 2nd: Mechanical Tows up to 100 KM).
                           </p>
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Sequence</th>
-                                <th>Tier Description</th>
-                                <th>Issue Type</th>
-                                <th>Allowed Tows</th>
-                                <th>Max Distance (KM)</th>
-                                <th>Min Days Between Tows</th>
-                                <th>Used Tows</th>
-                                <th>Remaining Tows</th>
-                                <th>Action</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {selectedPolicyTiers.map(tier => (
-                                <tr key={tier.quotaTierId}>
-                                  <td>#{tier.tierSequence}</td>
-                                  <td>
-                                    Tier #{tier.tierSequence} — {tier.coverageType} (
-                                    {tier.maxDistanceKm} KM)
-                                  </td>
-                                  <td>
-                                    <strong>{tier.coverageType}</strong>
-                                  </td>
-                                  <td>{tier.allowedTows}</td>
-                                  <td>{tier.maxDistanceKm} KM</td>
-                                  <td>{tier.minIntervalDays} days</td>
-                                  <td>{tier.usedTows}</td>
-                                  <td>
-                                    <span
-                                      className={`badge ${
-                                        tier.remainingTows > 0 ? 'badge-Done' : 'badge-Rejected'
-                                      }`}
-                                    >
-                                      {tier.remainingTows}
-                                    </span>
-                                  </td>
-                                  <td>
-                                    <button
-                                      type="button"
-                                      className="btn-xs"
-                                      onClick={() => setEditingTier({ ...tier })}
-                                    >
-                                      Edit
-                                    </button>
-                                  </td>
+                          <div className="table-scroll">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Sequence</th>
+                                  <th>Tier Description</th>
+                                  <th>Issue Type</th>
+                                  <th>Allowed Tows</th>
+                                  <th>Max Distance (KM)</th>
+                                  <th>Min Days Between Tows</th>
+                                  <th>Used Tows</th>
+                                  <th>Remaining Tows</th>
+                                  <th>Action</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {selectedPolicyTiers.map(tier => (
+                                  <tr key={tier.quotaTierId}>
+                                    <td>#{tier.tierSequence}</td>
+                                    <td>
+                                      Tier #{tier.tierSequence} — {tier.coverageType} (
+                                      {tier.maxDistanceKm} KM)
+                                    </td>
+                                    <td>
+                                      <strong>{tier.coverageType}</strong>
+                                    </td>
+                                    <td>{tier.allowedTows}</td>
+                                    <td>{tier.maxDistanceKm} KM</td>
+                                    <td>{tier.minIntervalDays} days</td>
+                                    <td>{tier.usedTows}</td>
+                                    <td>
+                                      <span
+                                        className={`badge ${
+                                          tier.remainingTows > 0 ? 'badge-Done' : 'badge-Rejected'
+                                        }`}
+                                      >
+                                        {tier.remainingTows}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      <button
+                                        type="button"
+                                        className="btn-xs"
+                                        onClick={() => setEditingTier({ ...tier })}
+                                      >
+                                        Edit
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
 
                           {editingTier && (
                             <div className="tier-edit-box">
@@ -5810,38 +5641,40 @@ export default function App() {
                           )}
                         </>
                       ) : (
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th>Request #</th>
-                              <th>Call Time</th>
-                              <th>Vehicle Plate</th>
-                              <th>Breakdown Issue</th>
-                              <th>Actual Distance (KM)</th>
-                              <th>Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(dashboard?.recentRequests || [])
-                              .filter(r => r.policyId === selectedPolicyObj.policyId)
-                              .map(r => (
-                                <tr key={r.towRequestId}>
-                                  <td>
-                                    <strong>{r.requestNumber}</strong>
-                                  </td>
-                                  <td>{r.createdAt}</td>
-                                  <td>
-                                    <code>{r.vehiclePlate}</code>
-                                  </td>
-                                  <td>{r.issueType}</td>
-                                  <td>{r.actualDistanceKm} KM</td>
-                                  <td>
-                                    <span className={`badge badge-${r.status}`}>{r.status}</span>
-                                  </td>
-                                </tr>
-                              ))}
-                          </tbody>
-                        </table>
+                        <div className="table-scroll">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Request #</th>
+                                <th>Call Time</th>
+                                <th>Vehicle Plate</th>
+                                <th>Breakdown Issue</th>
+                                <th>Actual Distance (KM)</th>
+                                <th>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(dashboard?.recentRequests || [])
+                                .filter(r => r.policyId === selectedPolicyObj.policyId)
+                                .map(r => (
+                                  <tr key={r.towRequestId}>
+                                    <td>
+                                      <strong>{r.requestNumber}</strong>
+                                    </td>
+                                    <td>{r.createdAt}</td>
+                                    <td>
+                                      <code>{r.vehiclePlate}</code>
+                                    </td>
+                                    <td>{r.issueType}</td>
+                                    <td>{r.actualDistanceKm} KM</td>
+                                    <td>
+                                      <span className={`badge badge-${r.status}`}>{formatLabel(r.status)}</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
                       )}
                     </div>
                     {renderInlineRecordChatter(selectedPolicyObj.policyNumber)}
@@ -6075,7 +5908,7 @@ export default function App() {
               <div className="erp-sheet-pad">
                 <div className="card-header-flex" style={{ marginBottom: '12px' }}>
                   <div>
-                    <h3>Tow Trucks Fleet Directory (dbo.TowTrucks)</h3>
+                    <h3>Tow Trucks Fleet Directory </h3>
                     <p className="muted">
                       Pure normalized fleet hardware &amp; GPS units. Click any tow truck row to
                       inspect or edit its specs, rotate its active driver, and view its historical{' '}
@@ -6084,91 +5917,93 @@ export default function App() {
                   </div>
                 </div>
 
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Truck Code</th>
-                      <th>License Plate</th>
-                      <th>Model &amp; Capacity</th>
-                      <th>Active Driver (DriverTruckAssignments)</th>
-                      <th>Fleet Status</th>
-                      <th>GPS Telemetry</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(dashboard?.trucks || [])
-                      .filter(t => {
-                        const q = configSearch.trim().toLowerCase();
-                        if (!q) return true;
-                        return (
-                          t.truckCode.toLowerCase().includes(q) ||
-                          t.licensePlate.toLowerCase().includes(q) ||
-                          t.truckModel.toLowerCase().includes(q) ||
-                          (t.driverName || '').toLowerCase().includes(q)
-                        );
-                      })
-                      .map(t => (
-                        <tr
-                          key={t.truckId}
-                          className="clickable-row"
-                          onClick={() => openTruckRecord(t.truckId)}
-                        >
-                          <td>
-                            <strong>{t.truckCode}</strong>
-                          </td>
-                          <td>
-                            <code>{t.licensePlate}</code>
-                          </td>
-                          <td>
-                            <strong>{t.truckModel}</strong>
-                            <br />
-                            <small className="muted">Max Payload: {t.maxPayloadKg} kg</small>
-                          </td>
-                          <td onClick={e => e.stopPropagation()}>
-                            {t.driverId ? (
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Truck Code</th>
+                        <th>License Plate</th>
+                        <th>Model &amp; Capacity</th>
+                        <th>Active Driver (DriverTruckAssignments)</th>
+                        <th>Fleet Status</th>
+                        <th>GPS Telemetry</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(dashboard?.trucks || [])
+                        .filter(t => {
+                          const q = configSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            t.truckCode.toLowerCase().includes(q) ||
+                            t.licensePlate.toLowerCase().includes(q) ||
+                            t.truckModel.toLowerCase().includes(q) ||
+                            (t.driverName || '').toLowerCase().includes(q)
+                          );
+                        })
+                        .map(t => (
+                          <tr
+                            key={t.truckId}
+                            className="clickable-row"
+                            onClick={() => openTruckRecord(t.truckId)}
+                          >
+                            <td>
+                              <strong>{t.truckCode}</strong>
+                            </td>
+                            <td>
+                              <code>{t.licensePlate}</code>
+                            </td>
+                            <td>
+                              <strong>{t.truckModel}</strong>
+                              <br />
+                              <small className="muted">Max Payload: {t.maxPayloadKg} kg</small>
+                            </td>
+                            <td onClick={e => e.stopPropagation()}>
+                              {t.driverId ? (
+                                <button
+                                  type="button"
+                                  className="rel-entity-link"
+                                  onClick={() => openDriverRecord(t.driverId)}
+                                >
+                                  {t.driverName} ({t.driverPhone})
+                                </button>
+                              ) : (
+                                <span className="muted">Unassigned / Standby</span>
+                              )}
+                            </td>
+                            <td>
+                              <span
+                                className={`badge ${
+                                  t.fleetStatus === 'Available'
+                                    ? 'badge-Done'
+                                    : t.fleetStatus === 'Maintenance' || t.fleetStatus === 'OffDuty'
+                                    ? 'badge-Rejected'
+                                    : 'badge-Approved'
+                                }`}
+                              >
+                                {t.fleetStatus}
+                              </span>
+                            </td>
+                            <td>
+                              <small className="muted">
+                                {Number(t.currentLat).toFixed(4)}, {Number(t.currentLng).toFixed(4)}
+                              </small>
+                            </td>
+                            <td onClick={e => e.stopPropagation()}>
                               <button
                                 type="button"
-                                className="rel-entity-link"
-                                onClick={() => openDriverRecord(t.driverId)}
+                                className="btn-xs"
+                                onClick={() => openTruckRecord(t.truckId)}
                               >
-                                {t.driverName} ({t.driverPhone})
+                                Open Truck Sheet
                               </button>
-                            ) : (
-                              <span className="muted">Unassigned / Standby</span>
-                            )}
-                          </td>
-                          <td>
-                            <span
-                              className={`badge ${
-                                t.fleetStatus === 'Available'
-                                  ? 'badge-Done'
-                                  : t.fleetStatus === 'Maintenance' || t.fleetStatus === 'OffDuty'
-                                  ? 'badge-Rejected'
-                                  : 'badge-Approved'
-                              }`}
-                            >
-                              {t.fleetStatus}
-                            </span>
-                          </td>
-                          <td>
-                            <small className="muted">
-                              {Number(t.currentLat).toFixed(4)}, {Number(t.currentLng).toFixed(4)}
-                            </small>
-                          </td>
-                          <td onClick={e => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              className="btn-xs"
-                              onClick={() => openTruckRecord(t.truckId)}
-                            >
-                              Open Truck Sheet
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -6282,10 +6117,10 @@ export default function App() {
                               }
                             >
                               <option value="Available">Available</option>
-                              <option value="EnRoute">EnRoute</option>
+                              <option value="EnRoute">En Route</option>
                               <option value="Towing">Towing</option>
                               <option value="Maintenance">Maintenance</option>
-                              <option value="OffDuty">OffDuty</option>
+                              <option value="OffDuty">Off Duty</option>
                             </select>
                             <input
                               type="number"
@@ -6379,81 +6214,85 @@ export default function App() {
                       </div>
                       <div className="erp-notebook-page">
                         {truckNotebookTab === 'assignments' && (
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Assignment #</th>
-                                <th>Driver</th>
-                                <th>Start Date</th>
-                                <th>End Date</th>
-                                <th>Notes</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {truckAssignments.map(a => (
-                                <tr
-                                  key={a.assignmentId}
-                                  className="clickable-row"
-                                  onClick={() => openDriverRecord(a.driverId)}
-                                >
-                                  <td>#{a.assignmentId}</td>
-                                  <td>
-                                    <span className="rel-entity-link">
-                                      {a.driverName} ({a.employeeCode})
-                                    </span>
-                                  </td>
-                                  <td>{a.startDate}</td>
-                                  <td>
-                                    {a.endDate ? (
-                                      <span className="muted">{a.endDate}</span>
-                                    ) : (
-                                      <span className="badge badge-Done">Active Shift (NULL EndDate)</span>
-                                    )}
-                                  </td>
-                                  <td>{a.assignmentNotes || '—'}</td>
+                          <div className="table-scroll">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Assignment #</th>
+                                  <th>Driver</th>
+                                  <th>Start Date</th>
+                                  <th>End Date</th>
+                                  <th>Notes</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {truckAssignments.map(a => (
+                                  <tr
+                                    key={a.assignmentId}
+                                    className="clickable-row"
+                                    onClick={() => openDriverRecord(a.driverId)}
+                                  >
+                                    <td>#{a.assignmentId}</td>
+                                    <td>
+                                      <span className="rel-entity-link">
+                                        {a.driverName} ({a.employeeCode})
+                                      </span>
+                                    </td>
+                                    <td>{a.startDate}</td>
+                                    <td>
+                                      {a.endDate ? (
+                                        <span className="muted">{a.endDate}</span>
+                                      ) : (
+                                        <span className="badge badge-Done">Active Shift</span>
+                                      )}
+                                    </td>
+                                    <td>{a.assignmentNotes || '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
 
                         {truckNotebookTab === 'tows' && (
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Request #</th>
-                                <th>Customer &amp; Vehicle</th>
-                                <th>Driver on Job</th>
-                                <th>Pickup → Dropoff</th>
-                                <th>Distance</th>
-                                <th>Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {truckRequests.map(r => (
-                                <tr
-                                  key={r.towRequestId}
-                                  className="clickable-row"
-                                  onClick={() => openTowRequestRecord(r.towRequestId)}
-                                >
-                                  <td>
-                                    <strong>{r.requestNumber}</strong>
-                                  </td>
-                                  <td>
-                                    {r.customerName} • <code>{r.vehiclePlate}</code>
-                                  </td>
-                                  <td>{r.assignedDriverName || '—'}</td>
-                                  <td>
-                                    {r.pickupAddress} → {r.destinationAddress}
-                                  </td>
-                                  <td>{r.actualDistanceKm} km</td>
-                                  <td>
-                                    <span className={`badge badge-${r.status}`}>{r.status}</span>
-                                  </td>
+                          <div className="table-scroll">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Request #</th>
+                                  <th>Customer &amp; Vehicle</th>
+                                  <th>Driver on Job</th>
+                                  <th>Pickup → Dropoff</th>
+                                  <th>Distance</th>
+                                  <th>Status</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {truckRequests.map(r => (
+                                  <tr
+                                    key={r.towRequestId}
+                                    className="clickable-row"
+                                    onClick={() => openTowRequestRecord(r.towRequestId)}
+                                  >
+                                    <td>
+                                      <strong>{r.requestNumber}</strong>
+                                    </td>
+                                    <td>
+                                      {r.customerName} • <code>{r.vehiclePlate}</code>
+                                    </td>
+                                    <td>{r.assignedDriverName || '—'}</td>
+                                    <td>
+                                      {r.pickupAddress} → {r.destinationAddress}
+                                    </td>
+                                    <td>{r.actualDistanceKm} km</td>
+                                    <td>
+                                      <span className={`badge badge-${r.status}`}>{formatLabel(r.status)}</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
                       </div>
                       {renderInlineRecordChatter(selectedTruckForm.truckCode)}
@@ -6480,7 +6319,7 @@ export default function App() {
 
                 <form onSubmit={handleCreateTruck} className="erp-sheet-pad">
                   <div className="erp-oe-title">
-                    <span className="erp-oe-label">New Normalized Unit (dbo.TowTrucks)</span>
+                    <span className="erp-oe-label">New Recovery Unit</span>
                     <h1>{newTruckForm.truckCode}</h1>
                   </div>
                   <div className="erp-group-grid">
@@ -6535,7 +6374,7 @@ export default function App() {
                         >
                           <option value="Available">Available</option>
                           <option value="Maintenance">Maintenance</option>
-                          <option value="OffDuty">OffDuty</option>
+                          <option value="OffDuty">Off Duty</option>
                         </select>
                       </div>
                       <div className="form-row" style={{ marginTop: '8px' }}>
@@ -6577,7 +6416,7 @@ export default function App() {
               <div className="erp-sheet-pad">
                 <div className="card-header-flex" style={{ marginBottom: '12px' }}>
                   <div>
-                    <h3>Drivers Directory (dbo.Drivers)</h3>
+                    <h3>Drivers Directory </h3>
                     <p className="muted">
                       Normalized driver personnel &amp; payroll profiles decoupled from trucks.
                       Click any driver row to edit their profile, rotate truck assignments, or view
@@ -6586,93 +6425,95 @@ export default function App() {
                   </div>
                 </div>
 
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Employee Code</th>
-                      <th>Driver Full Name</th>
-                      <th>Phone &amp; License</th>
-                      <th>Active Assigned Truck</th>
-                      <th>Compensation (Base / OT)</th>
-                      <th>Shift Mode</th>
-                      <th>Status</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(dashboard?.drivers || [])
-                      .filter(d => {
-                        const q = configSearch.trim().toLowerCase();
-                        if (!q) return true;
-                        return (
-                          d.employeeCode.toLowerCase().includes(q) ||
-                          d.fullName.toLowerCase().includes(q) ||
-                          d.phone.toLowerCase().includes(q) ||
-                          (d.activeTruckCode || '').toLowerCase().includes(q)
-                        );
-                      })
-                      .map(d => (
-                        <tr
-                          key={d.driverId}
-                          className="clickable-row"
-                          onClick={() => openDriverRecord(d.driverId)}
-                        >
-                          <td>
-                            <code>{d.employeeCode}</code>
-                          </td>
-                          <td>
-                            <strong>{d.fullName}</strong>
-                          </td>
-                          <td>
-                            {d.phone}
-                            <br />
-                            <small className="muted">Lic: {d.licenseNumber}</small>
-                          </td>
-                          <td onClick={e => e.stopPropagation()}>
-                            {d.activeTruckId ? (
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Employee Code</th>
+                        <th>Driver Full Name</th>
+                        <th>Phone &amp; License</th>
+                        <th>Active Assigned Truck</th>
+                        <th>Compensation (Base / OT)</th>
+                        <th>Shift Mode</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(dashboard?.drivers || [])
+                        .filter(d => {
+                          const q = configSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            d.employeeCode.toLowerCase().includes(q) ||
+                            d.fullName.toLowerCase().includes(q) ||
+                            d.phone.toLowerCase().includes(q) ||
+                            (d.activeTruckCode || '').toLowerCase().includes(q)
+                          );
+                        })
+                        .map(d => (
+                          <tr
+                            key={d.driverId}
+                            className="clickable-row"
+                            onClick={() => openDriverRecord(d.driverId)}
+                          >
+                            <td>
+                              <code>{d.employeeCode}</code>
+                            </td>
+                            <td>
+                              <strong>{d.fullName}</strong>
+                            </td>
+                            <td>
+                              {d.phone}
+                              <br />
+                              <small className="muted">Lic: {d.licenseNumber}</small>
+                            </td>
+                            <td onClick={e => e.stopPropagation()}>
+                              {d.activeTruckId ? (
+                                <button
+                                  type="button"
+                                  className="rel-entity-link"
+                                  onClick={() => openTruckRecord(d.activeTruckId)}
+                                >
+                                  {d.activeTruckCode}
+                                </button>
+                              ) : (
+                                <span className="muted">Standby / Unassigned</span>
+                              )}
+                            </td>
+                            <td>
+                              ${d.baseMonthlySalary} / +${d.overtimeRatePerTow}
+                            </td>
+                            <td>
+                              {d.isWorkingOffDay ? (
+                                <span className="badge badge-PendingInsurance">Off-Day OT</span>
+                              ) : (
+                                <span className="muted">Regular</span>
+                              )}
+                            </td>
+                            <td>
+                              <span
+                                className={`badge ${
+                                  d.driverStatus === 'Active' ? 'badge-Done' : 'badge-Draft'
+                                }`}
+                              >
+                                {d.driverStatus}
+                              </span>
+                            </td>
+                            <td onClick={e => e.stopPropagation()}>
                               <button
                                 type="button"
-                                className="rel-entity-link"
-                                onClick={() => openTruckRecord(d.activeTruckId)}
+                                className="btn-xs"
+                                onClick={() => openDriverRecord(d.driverId)}
                               >
-                                {d.activeTruckCode}
+                                Open Driver Sheet
                               </button>
-                            ) : (
-                              <span className="muted">Standby / Unassigned</span>
-                            )}
-                          </td>
-                          <td>
-                            ${d.baseMonthlySalary} / +${d.overtimeRatePerTow}
-                          </td>
-                          <td>
-                            {d.isWorkingOffDay ? (
-                              <span className="badge badge-PendingInsurance">Off-Day OT</span>
-                            ) : (
-                              <span className="muted">Regular</span>
-                            )}
-                          </td>
-                          <td>
-                            <span
-                              className={`badge ${
-                                d.driverStatus === 'Active' ? 'badge-Done' : 'badge-Draft'
-                              }`}
-                            >
-                              {d.driverStatus}
-                            </span>
-                          </td>
-                          <td onClick={e => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              className="btn-xs"
-                              onClick={() => openDriverRecord(d.driverId)}
-                            >
-                              Open Driver Sheet
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -6720,7 +6561,7 @@ export default function App() {
 
                     <div className="erp-group-grid">
                       <form onSubmit={handleSaveDriverContact} className="erp-group-col">
-                        <div className="erp-group-header">PERSONNEL &amp; PAYROLL PROFILE (SINGLE-ROW 3NF)</div>
+                        <div className="erp-group-header">PERSONNEL &amp; PAYROLL PROFILE </div>
                         <div className="form-row">
                           <label>Full Name &amp; Mobile Phone</label>
                           <div className="split-inputs">
@@ -6761,7 +6602,7 @@ export default function App() {
                               }
                             >
                               <option value="Active">Active</option>
-                              <option value="OnLeave">OnLeave</option>
+                              <option value="OnLeave">On Leave</option>
                               <option value="Inactive">Inactive</option>
                             </select>
                           </div>
@@ -6815,7 +6656,7 @@ export default function App() {
 
                         <div style={{ marginTop: '12px' }}>
                           <button type="submit" className="btn-primary">
-                            Save Driver Profile (dbo.Drivers)
+                            Save Driver Profile 
                           </button>
                         </div>
                       </form>
@@ -6888,77 +6729,81 @@ export default function App() {
 
                       <div className="erp-notebook-page">
                         {driverNotebookTab === 'assignments' && (
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Assignment #</th>
-                                <th>Tow Truck</th>
-                                <th>Start Date</th>
-                                <th>End Date</th>
-                                <th>Assignment Notes</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {driverAssignments.map(a => (
-                                <tr
-                                  key={a.assignmentId}
-                                  className="clickable-row"
-                                  onClick={() => openTruckRecord(a.truckId)}
-                                >
-                                  <td>#{a.assignmentId}</td>
-                                  <td>
-                                    <span className="rel-entity-link">
-                                      {a.truckCode} ({a.truckPlate})
-                                    </span>
-                                  </td>
-                                  <td>{a.startDate}</td>
-                                  <td>
-                                    {a.endDate ? (
-                                      <span className="muted">{a.endDate}</span>
-                                    ) : (
-                                      <span className="badge badge-Done">Active (NULL EndDate)</span>
-                                    )}
-                                  </td>
-                                  <td>{a.assignmentNotes || '—'}</td>
+                          <div className="table-scroll">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Assignment #</th>
+                                  <th>Tow Truck</th>
+                                  <th>Start Date</th>
+                                  <th>End Date</th>
+                                  <th>Assignment Notes</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {driverAssignments.map(a => (
+                                  <tr
+                                    key={a.assignmentId}
+                                    className="clickable-row"
+                                    onClick={() => openTruckRecord(a.truckId)}
+                                  >
+                                    <td>#{a.assignmentId}</td>
+                                    <td>
+                                      <span className="rel-entity-link">
+                                        {a.truckCode} ({a.truckPlate})
+                                      </span>
+                                    </td>
+                                    <td>{a.startDate}</td>
+                                    <td>
+                                      {a.endDate ? (
+                                        <span className="muted">{a.endDate}</span>
+                                      ) : (
+                                        <span className="badge badge-Done">Active Shift</span>
+                                      )}
+                                    </td>
+                                    <td>{a.assignmentNotes || '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
 
                         {driverNotebookTab === 'tows' && (
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Request #</th>
-                                <th>Customer &amp; Vehicle</th>
-                                <th>Truck Used</th>
-                                <th>Distance</th>
-                                <th>Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {driverTows.map(r => (
-                                <tr
-                                  key={r.towRequestId}
-                                  className="clickable-row"
-                                  onClick={() => openTowRequestRecord(r.towRequestId)}
-                                >
-                                  <td>
-                                    <strong>{r.requestNumber}</strong>
-                                  </td>
-                                  <td>
-                                    {r.customerName} • <code>{r.vehiclePlate}</code>
-                                  </td>
-                                  <td>{r.truckCode || '—'}</td>
-                                  <td>{r.actualDistanceKm} km</td>
-                                  <td>
-                                    <span className={`badge badge-${r.status}`}>{r.status}</span>
-                                  </td>
+                          <div className="table-scroll">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Request #</th>
+                                  <th>Customer &amp; Vehicle</th>
+                                  <th>Truck Used</th>
+                                  <th>Distance</th>
+                                  <th>Status</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {driverTows.map(r => (
+                                  <tr
+                                    key={r.towRequestId}
+                                    className="clickable-row"
+                                    onClick={() => openTowRequestRecord(r.towRequestId)}
+                                  >
+                                    <td>
+                                      <strong>{r.requestNumber}</strong>
+                                    </td>
+                                    <td>
+                                      {r.customerName} • <code>{r.vehiclePlate}</code>
+                                    </td>
+                                    <td>{r.truckCode || '—'}</td>
+                                    <td>{r.actualDistanceKm} km</td>
+                                    <td>
+                                      <span className={`badge badge-${r.status}`}>{formatLabel(r.status)}</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
 
                         {driverNotebookTab === 'payroll' && (
@@ -6984,36 +6829,38 @@ export default function App() {
                               </div>
                             )}
 
-                            <table className="data-table">
-                              <thead>
-                                <tr>
-                                  <th>Payment #</th>
-                                  <th>Invoice / Request</th>
-                                  <th>Customer</th>
-                                  <th>Cash Collected</th>
-                                  <th>Paid At</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {driverCashRows.map(pm => (
-                                  <tr
-                                    key={pm.paymentId}
-                                    className="clickable-row"
-                                    onClick={() => openInvoiceRecord(pm.invoiceId)}
-                                  >
-                                    <td>#{pm.paymentId}</td>
-                                    <td>
-                                      <strong>{pm.invoiceNumber}</strong> ({pm.requestNumber})
-                                    </td>
-                                    <td>{pm.payerName}</td>
-                                    <td>
-                                      <strong className="text-green">+${pm.amountPaid}</strong>
-                                    </td>
-                                    <td>{pm.paidAt}</td>
+                            <div className="table-scroll">
+                              <table className="data-table">
+                                <thead>
+                                  <tr>
+                                    <th>Payment #</th>
+                                    <th>Invoice / Request</th>
+                                    <th>Customer</th>
+                                    <th>Cash Collected</th>
+                                    <th>Paid At</th>
                                   </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                                </thead>
+                                <tbody>
+                                  {driverCashRows.map(pm => (
+                                    <tr
+                                      key={pm.paymentId}
+                                      className="clickable-row"
+                                      onClick={() => openInvoiceRecord(pm.invoiceId)}
+                                    >
+                                      <td>#{pm.paymentId}</td>
+                                      <td>
+                                        <strong>{pm.invoiceNumber}</strong> ({pm.requestNumber})
+                                      </td>
+                                      <td>{pm.payerName}</td>
+                                      <td>
+                                        <strong className="text-green">+${pm.amountPaid}</strong>
+                                      </td>
+                                      <td>{pm.paidAt}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -7043,7 +6890,7 @@ export default function App() {
 
                 <form onSubmit={handleCreateDriver} className="erp-sheet-pad">
                   <div className="erp-oe-title">
-                    <span className="erp-oe-label">New Normalized Driver (dbo.Drivers)</span>
+                    <span className="erp-oe-label">New Normalized Driver </span>
                     <h1>{newDriverForm.fullName || newDriverForm.employeeCode}</h1>
                   </div>
                   <div className="erp-group-grid">
@@ -7158,7 +7005,7 @@ export default function App() {
               <div className="erp-sheet-pad">
                 <div className="card-header-flex" style={{ marginBottom: '12px' }}>
                   <div>
-                    <h3>Tariff Schedule Catalog (dbo.Tariffs)</h3>
+                    <h3>Tariff Schedule Catalog </h3>
                     <p className="muted">
                       Click any tariff row to inspect its effective rate schedule and all{' '}
                       <code>dbo.TowInvoices</code> snapshot-billed under it, or click{' '}
@@ -7168,50 +7015,52 @@ export default function App() {
                   </div>
                 </div>
 
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Tariff Code</th>
-                      <th>Name &amp; Category</th>
-                      <th>Base Fee</th>
-                      <th>Rate / KM</th>
-                      <th>Night Surcharge</th>
-                      <th>Effective Window</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(dashboard?.tariffs || []).map(t => (
-                      <tr
-                        key={t.tariffId}
-                        className="clickable-row"
-                        onClick={() => openTariffRecord(t.tariffId)}
-                      >
-                        <td>
-                          <strong>{t.tariffCode}</strong>
-                        </td>
-                        <td>
-                          <strong>{t.tariffName}</strong>
-                          <br />
-                          <small className="muted">{t.serviceCategory}</small>
-                        </td>
-                        <td>${t.baseFee}</td>
-                        <td>${t.pricePerKm}/km</td>
-                        <td>+${t.nightSurcharge}</td>
-                        <td>
-                          {t.effectiveFrom} → {t.effectiveTo || 'Open'}
-                        </td>
-                        <td>
-                          {t.isActive ? (
-                            <span className="badge badge-Done">Active</span>
-                          ) : (
-                            <span className="badge badge-Draft">Historical</span>
-                          )}
-                        </td>
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Tariff Code</th>
+                        <th>Name &amp; Category</th>
+                        <th>Base Fee</th>
+                        <th>Rate / KM</th>
+                        <th>Night Surcharge</th>
+                        <th>Effective Window</th>
+                        <th>Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {(dashboard?.tariffs || []).map(t => (
+                        <tr
+                          key={t.tariffId}
+                          className="clickable-row"
+                          onClick={() => openTariffRecord(t.tariffId)}
+                        >
+                          <td>
+                            <strong>{t.tariffCode}</strong>
+                          </td>
+                          <td>
+                            <strong>{t.tariffName}</strong>
+                            <br />
+                            <small className="muted">{t.serviceCategory}</small>
+                          </td>
+                          <td>${t.baseFee}</td>
+                          <td>${t.pricePerKm}/km</td>
+                          <td>+${t.nightSurcharge}</td>
+                          <td>
+                            {t.effectiveFrom} → {t.effectiveTo || 'Open'}
+                          </td>
+                          <td>
+                            {t.isActive ? (
+                              <span className="badge badge-Done">Active</span>
+                            ) : (
+                              <span className="badge badge-Draft">Historical</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -7288,44 +7137,46 @@ export default function App() {
                         </button>
                       </div>
                       <div className="erp-notebook-page">
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th>Invoice #</th>
-                              <th>Request #</th>
-                              <th>Customer</th>
-                              <th>Snapshot Rates</th>
-                              <th>Total</th>
-                              <th>Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {linkedInvoices.map(inv => (
-                              <tr
-                                key={inv.invoiceId}
-                                className="clickable-row"
-                                onClick={() => openInvoiceRecord(inv.invoiceId)}
-                              >
-                                <td>
-                                  <strong>{inv.invoiceNumber}</strong>
-                                </td>
-                                <td>
-                                  <code>{inv.requestNumber}</code>
-                                </td>
-                                <td>{inv.customerName}</td>
-                                <td>
-                                  Base ${inv.appliedBaseFee} • ${inv.appliedPricePerKm}/km
-                                </td>
-                                <td>
-                                  <strong>${inv.totalAmount}</strong>
-                                </td>
-                                <td>
-                                  <span className="badge badge-Approved">{inv.invoiceStatus}</span>
-                                </td>
+                        <div className="table-scroll">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Invoice #</th>
+                                <th>Request #</th>
+                                <th>Customer</th>
+                                <th>Snapshot Rates</th>
+                                <th>Total</th>
+                                <th>Status</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {linkedInvoices.map(inv => (
+                                <tr
+                                  key={inv.invoiceId}
+                                  className="clickable-row"
+                                  onClick={() => openInvoiceRecord(inv.invoiceId)}
+                                >
+                                  <td>
+                                    <strong>{inv.invoiceNumber}</strong>
+                                  </td>
+                                  <td>
+                                    <code>{inv.requestNumber}</code>
+                                  </td>
+                                  <td>{inv.customerName}</td>
+                                  <td>
+                                    Base ${inv.appliedBaseFee} • ${inv.appliedPricePerKm}/km
+                                  </td>
+                                  <td>
+                                    <strong>${inv.totalAmount}</strong>
+                                  </td>
+                                  <td>
+                                    <span className="badge badge-Approved">{formatLabel(inv.invoiceStatus)}</span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                       {renderInlineRecordChatter(tf.tariffCode)}
                     </div>
@@ -7350,7 +7201,7 @@ export default function App() {
                 </div>
                 <form onSubmit={handleCreateTariff} className="erp-sheet-pad">
                   <div className="erp-oe-title">
-                    <span className="erp-oe-label">New Schedule (dbo.Tariffs)</span>
+                    <span className="erp-oe-label">New Schedule </span>
                     <h1>{newTariffForm.tariffCode}</h1>
                   </div>
                   <div className="erp-group-grid">
@@ -7466,7 +7317,7 @@ export default function App() {
               <div className="erp-sheet-pad">
                 <div className="queue-header" style={{ marginBottom: '12px' }}>
                   <div>
-                    <h3>Tow Invoices Directory (dbo.TowInvoices)</h3>
+                    <h3>Tow Invoices Directory </h3>
                     <p className="muted">
                       Click any invoice row to inspect its immutable tariff snapshot, separate
                       Insurer vs. Customer obligations, linked Tow Request, and individual{' '}
@@ -7489,135 +7340,137 @@ export default function App() {
                   </div>
                 </div>
 
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Invoice #</th>
-                      <th>Request / Tariff</th>
-                      <th>Insurer Obligation (Billed / Paid / Due)</th>
-                      <th>Customer Obligation (Billed / Paid / Due)</th>
-                      <th>Total</th>
-                      <th>Status</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(dashboard?.invoices || [])
-                      .filter(inv => {
-                        const q = billingSearch.trim().toLowerCase();
-                        if (!q) return true;
-                        return (
-                          inv.invoiceNumber.toLowerCase().includes(q) ||
-                          inv.requestNumber.toLowerCase().includes(q) ||
-                          inv.customerName.toLowerCase().includes(q) ||
-                          (inv.insuranceProviderName || '').toLowerCase().includes(q)
-                        );
-                      })
-                      .map(inv => {
-                        const canPayInsurer = Number(inv.insurerBalanceDue) > 0;
-                        const canPayCustomer = Number(inv.customerBalanceDue) > 0;
-                        return (
-                          <tr
-                            key={inv.invoiceId}
-                            className="clickable-row"
-                            onClick={() => openInvoiceRecord(inv.invoiceId)}
-                          >
-                            <td>
-                              <strong>{inv.invoiceNumber}</strong>
-                              <br />
-                              <small className="muted">{inv.issuedAt}</small>
-                            </td>
-                            <td>
-                              <code>{inv.requestNumber}</code>
-                              <br />
-                              <small className="muted">
-                                {inv.tariffCode} (${inv.appliedBaseFee} + ${inv.appliedPricePerKm}/km)
-                              </small>
-                            </td>
-                            <td>
-                              <div>
-                                <strong>{inv.insuranceProviderName || 'Direct Cash (None)'}</strong>
-                              </div>
-                              <small>
-                                Billed: ${inv.insurerBilledAmount} | Paid: ${inv.insurerPaidAmount} |{' '}
-                                <strong className={canPayInsurer ? 'text-amber' : 'text-green'}>
-                                  Due: ${inv.insurerBalanceDue}
-                                </strong>
-                              </small>
-                            </td>
-                            <td>
-                              <div>
-                                <strong>{inv.customerName}</strong>
-                              </div>
-                              <small>
-                                Billed: ${inv.customerBilledAmount} | Paid: ${inv.customerPaidAmount} |{' '}
-                                <strong className={canPayCustomer ? 'text-red' : 'text-green'}>
-                                  Due: ${inv.customerBalanceDue}
-                                </strong>
-                              </small>
-                            </td>
-                            <td>
-                              <strong>${inv.totalAmount}</strong>
-                            </td>
-                            <td>
-                              <span
-                                className={`badge ${
-                                  inv.invoiceStatus === 'Paid'
-                                    ? 'badge-Done'
-                                    : inv.invoiceStatus === 'PartiallyPaid'
-                                    ? 'badge-PendingInsurance'
-                                    : 'badge-Draft'
-                                }`}
-                              >
-                                {inv.invoiceStatus}
-                              </span>
-                            </td>
-                            <td onClick={e => e.stopPropagation()}>
-                              <div className="action-btn-group">
-                                <button
-                                  type="button"
-                                  className="btn-xs"
-                                  onClick={() => openInvoiceRecord(inv.invoiceId)}
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Invoice #</th>
+                        <th>Request / Tariff</th>
+                        <th>Insurer Obligation (Billed / Paid / Due)</th>
+                        <th>Customer Obligation (Billed / Paid / Due)</th>
+                        <th>Total</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(dashboard?.invoices || [])
+                        .filter(inv => {
+                          const q = billingSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            inv.invoiceNumber.toLowerCase().includes(q) ||
+                            inv.requestNumber.toLowerCase().includes(q) ||
+                            inv.customerName.toLowerCase().includes(q) ||
+                            (inv.insuranceProviderName || '').toLowerCase().includes(q)
+                          );
+                        })
+                        .map(inv => {
+                          const canPayInsurer = Number(inv.insurerBalanceDue) > 0;
+                          const canPayCustomer = Number(inv.customerBalanceDue) > 0;
+                          return (
+                            <tr
+                              key={inv.invoiceId}
+                              className="clickable-row"
+                              onClick={() => openInvoiceRecord(inv.invoiceId)}
+                            >
+                              <td>
+                                <strong>{inv.invoiceNumber}</strong>
+                                <br />
+                                <small className="muted">{inv.issuedAt}</small>
+                              </td>
+                              <td>
+                                <code>{inv.requestNumber}</code>
+                                <br />
+                                <small className="muted">
+                                  {inv.tariffCode} (${inv.appliedBaseFee} + ${inv.appliedPricePerKm}/km)
+                                </small>
+                              </td>
+                              <td>
+                                <div>
+                                  <strong>{inv.insuranceProviderName || 'Direct Cash (None)'}</strong>
+                                </div>
+                                <small>
+                                  Billed: ${inv.insurerBilledAmount} | Paid: ${inv.insurerPaidAmount} |{' '}
+                                  <strong className={canPayInsurer ? 'text-amber' : 'text-green'}>
+                                    Due: ${inv.insurerBalanceDue}
+                                  </strong>
+                                </small>
+                              </td>
+                              <td>
+                                <div>
+                                  <strong>{inv.customerName}</strong>
+                                </div>
+                                <small>
+                                  Billed: ${inv.customerBilledAmount} | Paid: ${inv.customerPaidAmount} |{' '}
+                                  <strong className={canPayCustomer ? 'text-red' : 'text-green'}>
+                                    Due: ${inv.customerBalanceDue}
+                                  </strong>
+                                </small>
+                              </td>
+                              <td>
+                                <strong>${inv.totalAmount}</strong>
+                              </td>
+                              <td>
+                                <span
+                                  className={`badge ${
+                                    inv.invoiceStatus === 'Paid'
+                                      ? 'badge-Done'
+                                      : inv.invoiceStatus === 'PartiallyPaid'
+                                      ? 'badge-PendingInsurance'
+                                      : 'badge-Draft'
+                                  }`}
                                 >
-                                  Open Sheet
-                                </button>
-                                {(canPayInsurer || canPayCustomer) && (
+                                  {formatLabel(inv.invoiceStatus)}
+                                </span>
+                              </td>
+                              <td onClick={e => e.stopPropagation()}>
+                                <div className="action-btn-group">
                                   <button
                                     type="button"
-                                    className="btn-xs btn-approve"
-                                    onClick={() => {
-                                      const defaultPayer = canPayInsurer
-                                        ? 'InsuranceProvider'
-                                        : 'Customer';
-                                      const defaultAmt = canPayInsurer
-                                        ? Number(inv.insurerBalanceDue)
-                                        : Number(inv.customerBalanceDue);
-                                      setPaymentForm({
-                                        payerType: defaultPayer,
-                                        amountPaid: defaultAmt,
-                                        paymentMethod:
-                                          defaultPayer === 'InsuranceProvider'
-                                            ? 'BankTransfer'
-                                            : 'OnSceneCash',
-                                        referenceNumber: `PAY-${inv.invoiceId}-${Math.floor(
-                                          100 + Math.random() * 900
-                                        )}`,
-                                        collectedByDriverId: '',
-                                        notes: 'Partial / full obligation settlement'
-                                      });
-                                      setPaymentModalInvoice(inv);
-                                    }}
+                                    className="btn-xs"
+                                    onClick={() => openInvoiceRecord(inv.invoiceId)}
                                   >
-                                    + Pay
+                                    Open Sheet
                                   </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
+                                  {(canPayInsurer || canPayCustomer) && (
+                                    <button
+                                      type="button"
+                                      className="btn-xs btn-approve"
+                                      onClick={() => {
+                                        const defaultPayer = canPayInsurer
+                                          ? 'InsuranceProvider'
+                                          : 'Customer';
+                                        const defaultAmt = canPayInsurer
+                                          ? Number(inv.insurerBalanceDue)
+                                          : Number(inv.customerBalanceDue);
+                                        setPaymentForm({
+                                          payerType: defaultPayer,
+                                          amountPaid: defaultAmt,
+                                          paymentMethod:
+                                            defaultPayer === 'InsuranceProvider'
+                                              ? 'BankTransfer'
+                                              : 'OnSceneCash',
+                                          referenceNumber: `PAY-${inv.invoiceId}-${Math.floor(
+                                            100 + Math.random() * 900
+                                          )}`,
+                                          collectedByDriverId: '',
+                                          notes: 'Partial / full obligation settlement'
+                                        });
+                                        setPaymentModalInvoice(inv);
+                                      }}
+                                    >
+                                      + Pay
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -7670,7 +7523,7 @@ export default function App() {
                       )}
                     </div>
                     <div className="o-statusbar-status">
-                      <span className="o-stage-pill current">{inv.invoiceStatus}</span>
+                      <span className="o-stage-pill current">{formatLabel(inv.invoiceStatus)}</span>
                     </div>
                   </div>
 
@@ -7682,7 +7535,7 @@ export default function App() {
 
                     <div className="erp-group-grid">
                       <div className="erp-group-col">
-                        <div className="erp-group-header">LINKED 3NF ENTITIES &amp; TARIFF SNAPSHOT</div>
+                        <div className="erp-group-header">LINKED RECORDS &amp; TARIFF SNAPSHOT</div>
                         <div className="erp-field-row">
                           <label>Tow Request</label>
                           <div className="erp-field-val">
@@ -7759,55 +7612,57 @@ export default function App() {
                     <div className="erp-notebook">
                       <div className="erp-notebook-tabs">
                         <button type="button" className="erp-nb-tab active">
-                          Individual Payment Ledger Rows in dbo.InvoicePayments ({invPayments.length})
+                          Payment Settlement Ledger ({invPayments.length})
                         </button>
                       </div>
                       <div className="erp-notebook-page">
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th>Payment ID</th>
-                              <th>Payer Type</th>
-                              <th>Payer Entity</th>
-                              <th>Amount Paid</th>
-                              <th>Method &amp; Ref</th>
-                              <th>Recorded By</th>
-                              <th>Paid At</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {invPayments.map(pm => (
-                              <tr key={pm.paymentId}>
-                                <td>#{pm.paymentId}</td>
-                                <td>
-                                  <span
-                                    className={`badge ${
-                                      pm.payerType === 'InsuranceProvider'
-                                        ? 'badge-Approved'
-                                        : 'badge-PendingInsurance'
-                                    }`}
-                                  >
-                                    {pm.payerType}
-                                  </span>
-                                </td>
-                                <td>{pm.payerName}</td>
-                                <td>
-                                  <strong className="text-green">+${pm.amountPaid}</strong>
-                                </td>
-                                <td>
-                                  {pm.paymentMethod} • <code>{pm.referenceNumber}</code>
-                                </td>
-                                <td>
-                                  <code>{pm.recordedByUsername}</code>
-                                  {pm.collectedByDriverName
-                                    ? ` (Driver: ${pm.collectedByDriverName})`
-                                    : ''}
-                                </td>
-                                <td>{pm.paidAt}</td>
+                        <div className="table-scroll">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Payment ID</th>
+                                <th>Payer Type</th>
+                                <th>Payer Entity</th>
+                                <th>Amount Paid</th>
+                                <th>Method &amp; Ref</th>
+                                <th>Recorded By</th>
+                                <th>Paid At</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {invPayments.map(pm => (
+                                <tr key={pm.paymentId}>
+                                  <td>#{pm.paymentId}</td>
+                                  <td>
+                                    <span
+                                      className={`badge ${
+                                        pm.payerType === 'InsuranceProvider'
+                                          ? 'badge-Approved'
+                                          : 'badge-PendingInsurance'
+                                      }`}
+                                    >
+                                      {formatLabel(pm.payerType)}
+                                    </span>
+                                  </td>
+                                  <td>{pm.payerName}</td>
+                                  <td>
+                                    <strong className="text-green">+${pm.amountPaid}</strong>
+                                  </td>
+                                  <td>
+                                    {pm.paymentMethod} • <code>{pm.referenceNumber}</code>
+                                  </td>
+                                  <td>
+                                    <code>{pm.recordedByUsername}</code>
+                                    {pm.collectedByDriverName
+                                      ? ` (Driver: ${pm.collectedByDriverName})`
+                                      : ''}
+                                  </td>
+                                  <td>{pm.paidAt}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                       {renderInlineRecordChatter(inv.invoiceNumber)}
                     </div>
@@ -7830,31 +7685,31 @@ export default function App() {
                 </p>
               </div>
               <div className="view-switcher">
-                <button
+                <button type="button"
                   className={queueViewMode === 'kanban' ? 'btn-xs active-view' : 'btn-xs'}
                   onClick={() => setQueueViewMode('kanban')}
                 >
                   Kanban View
                 </button>
-                <button
+                <button type="button"
                   className={queueViewMode === 'table' ? 'btn-xs active-view' : 'btn-xs'}
                   onClick={() => setQueueViewMode('table')}
                 >
                   Table View
                 </button>
-                <button
+                <button type="button"
                   className={queueViewMode === 'shifts' ? 'btn-xs active-view' : 'btn-xs'}
                   onClick={() => setQueueViewMode('shifts')}
                 >
                   Fleet Shifts
                 </button>
-                <button
+                <button type="button"
                   className={queueViewMode === 'payroll' ? 'btn-xs active-view' : 'btn-xs'}
                   onClick={() => setQueueViewMode('payroll')}
                 >
                   Driver Payroll &amp; Overtime (7PM–7AM)
                 </button>
-                <button className="btn-secondary" onClick={fetchDashboard}>
+                <button type="button" className="btn-secondary" onClick={fetchDashboard}>
                   Refresh
                 </button>
               </div>
@@ -7923,14 +7778,14 @@ export default function App() {
                                     ))}
                                   </select>
                                   <div className="action-btn-group">
-                                    <button
+                                    <button type="button"
                                       className="btn-xs btn-approve"
                                       onClick={() => handleDispatchTruck(r.towRequestId)}
                                     >
                                       Approve &amp; Dispatch
                                     </button>
                                     {r.status === 'Draft' && (
-                                      <button
+                                      <button type="button"
                                         className="btn-xs"
                                         onClick={() =>
                                           handleLifecycleChange(
@@ -7942,7 +7797,7 @@ export default function App() {
                                         Pending Ins.
                                       </button>
                                     )}
-                                    <button
+                                    <button type="button"
                                       className="btn-xs btn-reject"
                                       onClick={() =>
                                         handleLifecycleChange(r.towRequestId, 'Rejected')
@@ -7955,19 +7810,19 @@ export default function App() {
                               )}
 
                               {r.status === 'Approved' && (
-                                <button
+                                <button type="button"
                                   className="btn-xs btn-approve"
                                   onClick={() =>
                                     handleLifecycleChange(r.towRequestId, 'InProgress')
                                   }
                                 >
-                                  ▶Start En-Route (InProgress)
+                                  ▶ Start En Route
                                 </button>
                               )}
 
                               {r.status === 'InProgress' && (
                                 <div className="action-btn-group">
-                                  <button
+                                  <button type="button"
                                     className="btn-xs btn-done"
                                     onClick={() =>
                                       handleLifecycleChange(r.towRequestId, 'Done')
@@ -7975,13 +7830,13 @@ export default function App() {
                                   >
                                     Mark Done
                                   </button>
-                                  <button
+                                  <button type="button"
                                     className="btn-xs btn-warn"
                                     onClick={() =>
                                       handleLifecycleChange(r.towRequestId, 'UnableToLoad')
                                     }
                                   >
-                                    UnableToLoad
+                                    Unable to Load
                                   </button>
                                 </div>
                               )}
@@ -7989,7 +7844,7 @@ export default function App() {
                               {(r.status === 'Done' ||
                                 r.status === 'UnableToLoad' ||
                                 r.status === 'Rejected') && (
-                                <button
+                                <button type="button"
                                   className="btn-xs btn-locked"
                                   title="Verify compliance seal on closed record"
                                   onClick={() => handleTestTriggerLock(r.towRequestId)}
@@ -8056,7 +7911,7 @@ export default function App() {
                           </span>
                         </td>
                         <td>
-                          <span className={`badge badge-${r.status}`}>{r.status}</span>
+                          <span className={`badge badge-${r.status}`}>{formatLabel(r.status)}</span>
                         </td>
                         <td>
                           {r.truckCode ? (
@@ -8077,7 +7932,7 @@ export default function App() {
                             {(r.status === 'Done' ||
                               r.status === 'UnableToLoad' ||
                               r.status === 'Rejected') && (
-                              <button
+                              <button type="button"
                                 className="btn-xs btn-locked"
                                 onClick={() => handleTestTriggerLock(r.towRequestId)}
                               >
@@ -8106,50 +7961,52 @@ export default function App() {
                   Driver Payroll, Night-Shift Overtime (19:00–07:00 / Off-Day) &amp; On-Scene Cash
                   Settlement
                 </h4>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Truck</th>
-                      <th>Driver Name</th>
-                      <th>Off-Day Shift?</th>
-                      <th>Base Monthly Salary</th>
-                      <th>OT Rate / Tow</th>
-                      <th>Completed Tows</th>
-                      <th>Overtime Tows (7PM–7AM / Off-Day)</th>
-                      <th>Earned Overtime Pay</th>
-                      <th>Cash Collected on Scene</th>
-                      <th>Net Driver Payout</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dashboard?.payrollReport?.map(p => (
-                      <tr key={p.truckId}>
-                        <td>
-                          <strong>{p.truckCode}</strong>
-                        </td>
-                        <td>{p.driverName}</td>
-                        <td>
-                          {p.isWorkingOffDay ? (
-                            <span className="badge badge-PendingInsurance">Yes (Off-Day OT)</span>
-                          ) : (
-                            'Regular Shift'
-                          )}
-                        </td>
-                        <td>${p.baseMonthlySalary}</td>
-                        <td>${p.overtimeRatePerTow}/tow</td>
-                        <td>{p.completedTowsThisMonth}</td>
-                        <td>
-                          <strong className="text-amber">{p.overtimeTowsCount} OT tows</strong>
-                        </td>
-                        <td className="text-green">+${p.overtimePayEarned}</td>
-                        <td className="text-red">-${p.totalCashCollectedByDriver}</td>
-                        <td>
-                          <strong>${p.netSalaryPayoutAfterCashDeduction}</strong>
-                        </td>
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Truck</th>
+                        <th>Driver Name</th>
+                        <th>Off-Day Shift?</th>
+                        <th>Base Monthly Salary</th>
+                        <th>OT Rate / Tow</th>
+                        <th>Completed Tows</th>
+                        <th>Overtime Tows (7PM–7AM / Off-Day)</th>
+                        <th>Earned Overtime Pay</th>
+                        <th>Cash Collected on Scene</th>
+                        <th>Net Driver Payout</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {dashboard?.payrollReport?.map(p => (
+                        <tr key={p.driverId}>
+                          <td>
+                            <strong>{p.truckCode}</strong>
+                          </td>
+                          <td>{p.driverName}</td>
+                          <td>
+                            {p.isWorkingOffDay ? (
+                              <span className="badge badge-PendingInsurance">Yes (Off-Day OT)</span>
+                            ) : (
+                              'Regular Shift'
+                            )}
+                          </td>
+                          <td>${p.baseMonthlySalary}</td>
+                          <td>${p.overtimeRatePerTow}/tow</td>
+                          <td>{p.completedTowsThisMonth}</td>
+                          <td>
+                            <strong className="text-amber">{p.overtimeTowsCount} OT tows</strong>
+                          </td>
+                          <td className="text-green">+${p.overtimePayEarned}</td>
+                          <td className="text-red">-${p.totalCashCollectedByDriver}</td>
+                          <td>
+                            <strong>${p.netSalaryPayoutAfterCashDeduction}</strong>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -8281,7 +8138,7 @@ export default function App() {
                   <code>SESSION_CONTEXT</code> dispatcher attribution.
                 </p>
 
-                <button
+                <button type="button"
                   className="btn-primary"
                   style={{ marginTop: '14px' }}
                   onClick={handleSimulateConcurrencyRace}
@@ -8351,13 +8208,13 @@ export default function App() {
                       </div>
 
                       <div className="action-btn-group" style={{ marginTop: '10px' }}>
-                        <button
+                        <button type="button"
                           className="btn-primary"
                           onClick={() => handleOptimisticUpdate(req, false)}
                         >
                           Save Dispatch Notes
                         </button>
-                        <button
+                        <button type="button"
                           className="btn-danger"
                           onClick={() => handleOptimisticUpdate(req, true)}
                         >
@@ -8383,8 +8240,7 @@ export default function App() {
 
             <div className="card" style={{ marginTop: '16px' }}>
               <h3>
-                Immutable Audit Trail (dbo.TowAuditLogs) — Actual Dispatcher via SQL{' '}
-                <code>SESSION_CONTEXT</code>
+                Tamper-Evident Operations Audit Trail
               </h3>
               <p className="muted">
                 Every database connection sets and validates <code>SESSION_CONTEXT</code> (
@@ -8401,8 +8257,8 @@ export default function App() {
                       <th>Audit #</th>
                       <th>Request #</th>
                       <th>Transition</th>
-                      <th>Authenticated Dispatcher (SESSION_CONTEXT)</th>
-                      <th>Pooled SQL Login</th>
+                      <th>Authenticated Operator</th>
+                      <th>Service Channel</th>
                       <th>Audit Note</th>
                       <th>Timestamp</th>
                     </tr>
@@ -8416,7 +8272,7 @@ export default function App() {
                         </td>
                         <td>
                           <code>{a.oldStatus}</code> →{' '}
-                          <span className={`badge badge-${a.newStatus}`}>{a.newStatus}</span>
+                          <span className={`badge badge-${a.newStatus}`}>{formatLabel(a.newStatus)}</span>
                         </td>
                         <td>
                           <strong>{a.changedBy}</strong>
@@ -8444,7 +8300,7 @@ export default function App() {
             ) : (
               <>
                 <h3>
-                  National Dispatch Archive ({kpis.totalTowRequests?.toLocaleString()} Normalized Records)
+                  National Dispatch Archive ({kpis.totalTowRequests?.toLocaleString()} Service Records)
                 </h3>
                 <p className="muted">
                   Instant historical lookup across{' '}
@@ -8478,199 +8334,386 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="o-domain-box">
-                  <div className="o-domain-header">
-                    <div className="o-domain-match-line">
-                      <span>Match</span>
-                      <select
-                        className="o-domain-match-select"
-                        value={domainMatchMode}
-                        onChange={e => setDomainMatchMode(e.target.value)}
-                      >
-                        <option value="all">all</option>
-                        <option value="any">any</option>
-                      </select>
-                      <span>of the following rules:</span>
-                    </div>
-
-                    <div className="action-btn-group">
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => addDomainRule()}
-                      >
-                        + New Rule
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => {
-                          setDomainMatchMode('all');
-                          setDomainRules(DEFAULT_ARCHIVE_DOMAIN);
-                          runPerformanceQuery(DEFAULT_ARCHIVE_DOMAIN, 'all');
-                        }}
-                      >
-                        Reset
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        title="Run automated SQL injection parameterization diagnostic"
-                        onClick={() => {
-                          const sqliRules = [
-                            { id: Date.now(), field: 'vehiclePlate', op: '=', value: "' OR 1=1 --" }
-                          ];
-                          setDomainMatchMode('all');
-                          setDomainRules(sqliRules);
-                          runPerformanceQuery(sqliRules, 'all');
-                        }}
-                      >
-                        Security Self-Check
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        onClick={() => runPerformanceQuery()}
-                        disabled={perfLoading}
-                      >
-                        {perfLoading ? 'Searching...' : 'Search Archive'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="o-domain-rules">
-                    {domainRules.length === 0 ? (
-                      <div className="muted" style={{ fontSize: '12.5px', padding: '4px 0' }}>
-                        No filter rules applied (matches latest 50 records). Click{' '}
-                        <strong>+ New Rule</strong> to filter by plate, status, date, policy, or
-                        invoice.
-                      </div>
-                    ) : (
-                      domainRules.map((rule, idx) => {
+                <div className="o-searchview-row" ref={domainWrapperRef}>
+                  <div
+                    className={
+                      domainPopupOpen ? 'o-searchview-input-box open' : 'o-searchview-input-box'
+                    }
+                    onClick={() => setDomainPopupOpen(true)}
+                  >
+                    {domainRules
+                      .filter(r => String(r.value ?? '').trim() !== '')
+                      .map(r => {
                         const def =
-                          DOMAIN_FIELD_DEFS[rule.field] || DOMAIN_FIELD_DEFS.vehiclePlate;
+                          DOMAIN_FIELD_DEFS[r.field] || DOMAIN_FIELD_DEFS.vehiclePlate;
+                        const opObj = def.ops.find(o => o.value === r.op) || def.ops[0];
                         return (
-                          <div key={rule.id} className="o-domain-rule-row">
-                            <select
-                              value={rule.field}
-                              onChange={e => updateDomainRuleField(rule.id, e.target.value)}
+                          <span key={r.id} className="o-search-facet">
+                            <span>
+                              <strong>{def.label}</strong> {opObj.label} {r.value}
+                            </span>
+                            <button
+                              type="button"
+                              className="o-search-facet-remove"
+                              title="Remove filter"
+                              onClick={e => {
+                                e.stopPropagation();
+                                const updated = domainRules.filter(x => x.id !== r.id);
+                                setDomainRules(updated);
+                                runPerformanceQuery(updated, domainMatchMode);
+                              }}
                             >
-                              {Object.entries(DOMAIN_FIELD_DEFS).map(([key, meta]) => (
-                                <option key={key} value={key}>
-                                  {meta.label}
-                                </option>
-                              ))}
-                            </select>
-
-                            <select
-                              value={rule.op}
-                              onChange={e => updateDomainRule(rule.id, { op: e.target.value })}
-                            >
-                              {def.ops.map(o => (
-                                <option key={o.value} value={o.value}>
-                                  {o.label}
-                                </option>
-                              ))}
-                            </select>
-
-                            {def.type === 'select' ? (
-                              <select
-                                value={rule.value}
-                                onChange={e => updateDomainRule(rule.id, { value: e.target.value })}
-                              >
-                                {def.options.map(opt => (
-                                  <option key={opt} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input
-                                type={def.type}
-                                placeholder={def.placeholder || 'Value...'}
-                                value={rule.value}
-                                onChange={e => updateDomainRule(rule.id, { value: e.target.value })}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    runPerformanceQuery();
-                                  }
-                                }}
-                              />
-                            )}
-
-                            <div className="action-btn-group">
-                              <button
-                                type="button"
-                                className="o-domain-icon-btn"
-                                title="Add rule below"
-                                onClick={() => addDomainRule(idx)}
-                              >
-                                +
-                              </button>
-                              <button
-                                type="button"
-                                className="o-domain-icon-btn"
-                                title="Remove rule"
-                                onClick={() => removeDomainRule(rule.id)}
-                              >
-                                ×
-                              </button>
-                            </div>
-                          </div>
+                              ×
+                            </button>
+                          </span>
                         );
-                      })
-                    )}
+                      })}
+
+                    <input
+                      type="text"
+                      className="o-searchview-text-input"
+                      placeholder="Click to open domain filter, or type plate / request # and press Enter..."
+                      value={archiveQuickInput}
+                      onFocus={() => setDomainPopupOpen(true)}
+                      onChange={e => setArchiveQuickInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') {
+                          setDomainPopupOpen(false);
+                        } else if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const trimmed = archiveQuickInput.trim();
+                          if (trimmed) {
+                            const guessedField = trimmed.toUpperCase().startsWith('TOW')
+                              ? 'requestNumber'
+                              : 'vehiclePlate';
+                            const nextRules = [
+                              ...domainRules,
+                              {
+                                id: Date.now(),
+                                field: guessedField,
+                                op: 'starts_with',
+                                value: trimmed
+                              }
+                            ];
+                            setDomainRules(nextRules);
+                            setArchiveQuickInput('');
+                            setDomainPopupOpen(false);
+                            runPerformanceQuery(nextRules, domainMatchMode);
+                          } else {
+                            setDomainPopupOpen(false);
+                            runPerformanceQuery();
+                          }
+                        }
+                      }}
+                    />
                   </div>
 
-                  <div className="o-domain-footer">
-                    <span className="o-domain-code">
-                      Domain: {formatOdooDomainExpression()}
-                    </span>
-                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => {
+                      setDomainPopupOpen(false);
+                      runPerformanceQuery();
+                    }}
+                    disabled={perfLoading}
+                  >
+                    {perfLoading ? 'Searching...' : 'Search Archive'}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    title="Run automated SQL injection parameterization diagnostic"
+                    onClick={() => {
+                      const sqliRules = [
+                        { id: Date.now(), field: 'vehiclePlate', op: '=', value: "' OR 1=1 --" }
+                      ];
+                      setDomainMatchMode('all');
+                      setDomainRules(sqliRules);
+                      setDomainPopupOpen(false);
+                      runPerformanceQuery(sqliRules, 'all');
+                    }}
+                  >
+                    Security Self-Check
+                  </button>
+
+                  {domainPopupOpen && (
+                    <div className="o-domain-popover" role="dialog" aria-label="Domain Filter">
+                      <div className="o-domain-header">
+                        <div className="o-domain-match-line">
+                          <span>Match</span>
+                          <select
+                            className="o-domain-match-select"
+                            value={domainMatchMode}
+                            onChange={e => setDomainMatchMode(e.target.value)}
+                          >
+                            <option value="all">all</option>
+                            <option value="any">any</option>
+                          </select>
+                          <span>of the following fields:</span>
+                        </div>
+
+                        <div className="action-btn-group">
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => addDomainRule()}
+                          >
+                            + Add Field
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => setDomainRules([])}
+                          >
+                            Clear All
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => {
+                              setDomainMatchMode('all');
+                              setDomainRules(DEFAULT_ARCHIVE_DOMAIN);
+                            }}
+                          >
+                            Reset Default
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="o-domain-rules">
+                        {domainRules.length === 0 ? (
+                          <div className="muted" style={{ fontSize: '12.5px', padding: '4px 0' }}>
+                            No domain fields added. Click <strong>+ Add Field</strong> to add a
+                            condition.
+                          </div>
+                        ) : (
+                          domainRules.map((rule, idx) => {
+                            const def =
+                              DOMAIN_FIELD_DEFS[rule.field] || DOMAIN_FIELD_DEFS.vehiclePlate;
+                            return (
+                              <div key={rule.id} className="o-domain-rule-row">
+                                <select
+                                  value={rule.field}
+                                  onChange={e => updateDomainRuleField(rule.id, e.target.value)}
+                                >
+                                  {Object.entries(DOMAIN_FIELD_DEFS).map(([key, meta]) => (
+                                    <option key={key} value={key}>
+                                      {meta.label}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <select
+                                  value={rule.op}
+                                  onChange={e => updateDomainRule(rule.id, { op: e.target.value })}
+                                >
+                                  {def.ops.map(o => (
+                                    <option key={o.value} value={o.value}>
+                                      {o.label}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                {def.type === 'select' ? (
+                                  <select
+                                    value={rule.value}
+                                    onChange={e =>
+                                      updateDomainRule(rule.id, { value: e.target.value })
+                                    }
+                                  >
+                                    {def.options.map(opt => (
+                                      <option key={opt} value={opt}>
+                                        {opt}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    type={def.type}
+                                    placeholder={def.placeholder || 'Value...'}
+                                    value={rule.value}
+                                    onChange={e =>
+                                      updateDomainRule(rule.id, { value: e.target.value })
+                                    }
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        setDomainPopupOpen(false);
+                                        runPerformanceQuery();
+                                      }
+                                    }}
+                                  />
+                                )}
+
+                                <div className="action-btn-group">
+                                  <button
+                                    type="button"
+                                    className="o-domain-icon-btn"
+                                    title="Add field below" aria-label="Add filter condition"
+                                    onClick={() => addDomainRule(idx)}
+                                  >
+                                    +
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="o-domain-icon-btn"
+                                    title="Remove field" aria-label="Remove filter condition"
+                                    onClick={() => removeDomainRule(rule.id)}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      <div className="o-domain-footer">
+                        <span className="o-domain-code">
+                          Domain: {formatOdooDomainExpression()}
+                        </span>
+                        <div className="action-btn-group">
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => setDomainPopupOpen(false)}
+                          >
+                            Close
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            onClick={() => {
+                              setDomainPopupOpen(false);
+                              runPerformanceQuery();
+                            }}
+                          >
+                            Apply &amp; Search
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {perfResult && (
-                  <div className="perf-results">
-                    <div className="elig-metrics">
-                      <div className="metric-item">
-                        <span>Query Latency</span>
-                        <strong className="text-green">{perfResult.elapsedMs} ms</strong>
-                      </div>
-                      <div className="metric-item">
-                        <span>Matched Records</span>
-                        <strong>{perfResult.rowCountReturned}</strong>
-                      </div>
-                      <div className="metric-item">
-                        <span>Final Execution Plan Indexes</span>
-                        <strong>
-                          <code>{perfResult.indexUsed}</code>
-                        </strong>
-                      </div>
-                      <div className="metric-item">
-                        <span>Plan Characteristics</span>
-                        <strong className="text-green">{perfResult.planCharacteristics}</strong>
-                      </div>
-                    </div>
+                {perfResult &&
+                  (() => {
+                    const totalMatched = Number(
+                      perfResult.totalMatched ?? perfResult.rowCountReturned ?? 0
+                    );
+                    const currentPage = Number(perfResult.page || perfPage || 1);
+                    const currentSize = Number(perfResult.pageSize || perfPageSize || 50);
+                    const rowsReturned = perfResult.rows?.length || 0;
+                    const rangeStart =
+                      totalMatched === 0 ? 0 : (currentPage - 1) * currentSize + 1;
+                    const rangeEnd =
+                      totalMatched === 0
+                        ? 0
+                        : Math.min(totalMatched, rangeStart + rowsReturned - 1);
+                    const hasPrev = currentPage > 1;
+                    const hasNext = rangeEnd < totalMatched;
 
-                    <div className="table-scroll">
-                      <table className="data-table">
-                        <thead>
-                          <tr>
-                            <th>Request #</th>
-                            <th>CreatedAt</th>
-                            <th>Plate</th>
-                            <th>Vehicle</th>
-                            <th>Type</th>
-                            <th>Status</th>
-                            <th>Road Distance &amp; Source</th>
-                            <th>Insurer ($)</th>
-                            <th>Customer ($)</th>
-                            <th>Invoice</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {perfResult.rows?.slice(0, 50).map(r => (
+                    return (
+                      <div className="perf-results">
+                        <div className="elig-metrics">
+                          <div className="metric-item">
+                            <span>Query Latency</span>
+                            <strong className="text-green">{perfResult.elapsedMs} ms</strong>
+                          </div>
+                          <div className="metric-item">
+                            <span>Matched Records</span>
+                            <strong>{totalMatched.toLocaleString()}</strong>
+                          </div>
+                          <div className="metric-item">
+                            <span>Indexed Lookup Path</span>
+                            <strong>
+                              <code>{perfResult.indexUsed}</code>
+                            </strong>
+                          </div>
+                          <div className="metric-item">
+                            <span>Search Mode</span>
+                            <strong className="text-green">{perfResult.planCharacteristics}</strong>
+                          </div>
+                        </div>
+
+                        <div className="archive-pagination-bar">
+                          <span className="muted" style={{ fontSize: '12.5px' }}>
+                            Showing{' '}
+                            <strong>
+                              {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}
+                            </strong>{' '}
+                            of <strong>{totalMatched.toLocaleString()}</strong> matching records
+                          </span>
+                          <div className="action-btn-group">
+                            <select
+                              className="o-domain-match-select"
+                              value={currentSize}
+                              onChange={e =>
+                                runPerformanceQuery(
+                                  domainRules,
+                                  domainMatchMode,
+                                  1,
+                                  Number(e.target.value)
+                                )
+                              }
+                            >
+                              <option value={50}>50 / page</option>
+                              <option value={100}>100 / page</option>
+                              <option value={250}>250 / page</option>
+                            </select>
+                            <button
+                              type="button"
+                              className="o-chatter-btn"
+                              disabled={!hasPrev || perfLoading}
+                              onClick={() =>
+                                runPerformanceQuery(
+                                  domainRules,
+                                  domainMatchMode,
+                                  currentPage - 1,
+                                  currentSize
+                                )
+                              }
+                            >
+                              ‹ Prev
+                            </button>
+                            <button
+                              type="button"
+                              className="o-chatter-btn"
+                              disabled={!hasNext || perfLoading}
+                              onClick={() =>
+                                runPerformanceQuery(
+                                  domainRules,
+                                  domainMatchMode,
+                                  currentPage + 1,
+                                  currentSize
+                                )
+                              }
+                            >
+                              Next ›
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="table-scroll">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Request #</th>
+                                <th>Created At</th>
+                                <th>Plate</th>
+                                <th>Vehicle</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Road Distance &amp; Source</th>
+                                <th>Insurer ($)</th>
+                                <th>Customer ($)</th>
+                                <th>Invoice</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {perfResult.rows?.map(r => (
                             <tr
                               key={r.towRequestId}
                               className="clickable-row"
@@ -8687,11 +8730,11 @@ export default function App() {
                               <td>{r.vehicleModel}</td>
                               <td>{r.issueType}</td>
                               <td>
-                                <span className={`badge badge-${r.status}`}>{r.status}</span>
+                                <span className={`badge badge-${r.status}`}>{formatLabel(r.status)}</span>
                               </td>
                               <td>
                                 <strong>{r.actualDistanceKm} km</strong>{' '}
-                                <small className="muted">({r.distanceSource})</small>
+                                <small className="muted">({formatLabel(r.distanceSource)})</small>
                               </td>
                               <td>${r.insurerBilledAmount}</td>
                               <td>${r.overageAmount}</td>
@@ -8705,7 +8748,7 @@ export default function App() {
                                       : 'badge-Draft'
                                   }`}
                                 >
-                                  {r.invoiceStatus}
+                                  {formatLabel(r.invoiceStatus)}
                                 </span>
                               </td>
                             </tr>
@@ -8714,7 +8757,8 @@ export default function App() {
                       </table>
                     </div>
                   </div>
-                )}
+                    );
+                  })()}
               </>
             )}
           </div>
@@ -8731,7 +8775,7 @@ export default function App() {
                   <div>
                     <h3>User Groups &amp; Permissions Directory</h3>
                     <p className="muted">
-                      Module permissions live exclusively on User Groups (3NF). Click any group row
+                      Role permissions are managed centrally through User Groups. Click any group row
                       to edit its permissions and view all operators assigned to that group.
                     </p>
                   </div>
@@ -8740,84 +8784,86 @@ export default function App() {
                   </button>
                 </div>
 
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>ID / Code</th>
-                      <th>User Group Name &amp; Description</th>
-                      <th>Group Module Permissions</th>
-                      <th>Assigned Users</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {userGroups
-                      .filter(g => {
-                        const q = configSearch.trim().toLowerCase();
-                        if (!q) return true;
-                        return (
-                          g.groupCode.toLowerCase().includes(q) ||
-                          g.groupName.toLowerCase().includes(q) ||
-                          (g.description || '').toLowerCase().includes(q)
-                        );
-                      })
-                      .map(g => (
-                        <tr
-                          key={g.groupId}
-                          className="clickable-row"
-                          onClick={() => openUserGroupRecord(g.groupId)}
-                        >
-                          <td>
-                            <strong>#{g.groupId}</strong> • <code>{g.groupCode}</code>
-                          </td>
-                          <td>
-                            <strong>{g.groupName}</strong>
-                            <br />
-                            <small className="muted">{g.description || '—'}</small>
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                              {g.canDispatch && <span className="badge badge-Done">Dispatch</span>}
-                              {g.canManageFleet && <span className="badge badge-Done">Fleet</span>}
-                              {g.canManagePolicies && <span className="badge badge-Done">Policies</span>}
-                              {g.canManageBilling && <span className="badge badge-Done">Billing</span>}
-                              {g.canManageUsers && <span className="badge badge-Approved">Users &amp; Groups</span>}
-                              {!g.canDispatch &&
-                                !g.canManageFleet &&
-                                !g.canManagePolicies &&
-                                !g.canManageBilling &&
-                                !g.canManageUsers && <span className="muted">Read-Only</span>}
-                            </div>
-                          </td>
-                          <td>
-                            <span className="badge badge-InProgress">
-                              {g.memberCount} {g.memberCount === 1 ? 'User' : 'Users'}
-                            </span>
-                          </td>
-                          <td onClick={e => e.stopPropagation()}>
-                            <div className="action-btn-group">
-                              <button
-                                type="button"
-                                className="btn-xs"
-                                onClick={() => openUserGroupRecord(g.groupId)}
-                              >
-                                Open Group Sheet
-                              </button>
-                              {!g.isSystemBuiltIn && g.memberCount === 0 && (
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>ID / Code</th>
+                        <th>User Group Name &amp; Description</th>
+                        <th>Group Module Permissions</th>
+                        <th>Assigned Users</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {userGroups
+                        .filter(g => {
+                          const q = configSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            g.groupCode.toLowerCase().includes(q) ||
+                            g.groupName.toLowerCase().includes(q) ||
+                            (g.description || '').toLowerCase().includes(q)
+                          );
+                        })
+                        .map(g => (
+                          <tr
+                            key={g.groupId}
+                            className="clickable-row"
+                            onClick={() => openUserGroupRecord(g.groupId)}
+                          >
+                            <td>
+                              <strong>#{g.groupId}</strong> • <code>{g.groupCode}</code>
+                            </td>
+                            <td>
+                              <strong>{g.groupName}</strong>
+                              <br />
+                              <small className="muted">{g.description || '—'}</small>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                {g.canDispatch && <span className="badge badge-Done">Dispatch</span>}
+                                {g.canManageFleet && <span className="badge badge-Done">Fleet</span>}
+                                {g.canManagePolicies && <span className="badge badge-Done">Policies</span>}
+                                {g.canManageBilling && <span className="badge badge-Done">Billing</span>}
+                                {g.canManageUsers && <span className="badge badge-Approved">Users &amp; Groups</span>}
+                                {!g.canDispatch &&
+                                  !g.canManageFleet &&
+                                  !g.canManagePolicies &&
+                                  !g.canManageBilling &&
+                                  !g.canManageUsers && <span className="muted">Read-Only</span>}
+                              </div>
+                            </td>
+                            <td>
+                              <span className="badge badge-InProgress">
+                                {g.memberCount} {g.memberCount === 1 ? 'User' : 'Users'}
+                              </span>
+                            </td>
+                            <td onClick={e => e.stopPropagation()}>
+                              <div className="action-btn-group">
                                 <button
                                   type="button"
-                                  className="btn-xs btn-reject"
-                                  onClick={() => handleDeleteUserGroup(g)}
+                                  className="btn-xs"
+                                  onClick={() => openUserGroupRecord(g.groupId)}
                                 >
-                                  Delete
+                                  Open Group Sheet
                                 </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                                {!g.isSystemBuiltIn && g.memberCount === 0 && (
+                                  <button
+                                    type="button"
+                                    className="btn-xs btn-reject"
+                                    onClick={() => handleDeleteUserGroup(g)}
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -8992,46 +9038,48 @@ export default function App() {
                         </button>
                       </div>
                       <div className="erp-notebook-page">
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th>User ID / Username</th>
-                              <th>Full Name</th>
-                              <th>Title &amp; Department</th>
-                              <th>Station</th>
-                              <th>Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {groupMembers.map(u => (
-                              <tr
-                                key={u.userId}
-                                className="clickable-row"
-                                onClick={() => openUserRecord(u.userId)}
-                              >
-                                <td>
-                                  <span className="rel-entity-link">@{u.username}</span>
-                                </td>
-                                <td>
-                                  <strong>{u.fullName}</strong>
-                                </td>
-                                <td>
-                                  {u.roleTitle} ({u.department})
-                                </td>
-                                <td>
-                                  <code>{u.stationCode}</code>
-                                </td>
-                                <td>
-                                  {u.isActive ? (
-                                    <span className="badge badge-Done">Active</span>
-                                  ) : (
-                                    <span className="badge badge-Rejected">Deactivated</span>
-                                  )}
-                                </td>
+                        <div className="table-scroll">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>User ID / Username</th>
+                                <th>Full Name</th>
+                                <th>Title &amp; Department</th>
+                                <th>Station</th>
+                                <th>Status</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {groupMembers.map(u => (
+                                <tr
+                                  key={u.userId}
+                                  className="clickable-row"
+                                  onClick={() => openUserRecord(u.userId)}
+                                >
+                                  <td>
+                                    <span className="rel-entity-link">@{u.username}</span>
+                                  </td>
+                                  <td>
+                                    <strong>{u.fullName}</strong>
+                                  </td>
+                                  <td>
+                                    {u.roleTitle} ({u.department})
+                                  </td>
+                                  <td>
+                                    <code>{u.stationCode}</code>
+                                  </td>
+                                  <td>
+                                    {u.isActive ? (
+                                      <span className="badge badge-Done">Active</span>
+                                    ) : (
+                                      <span className="badge badge-Rejected">Deactivated</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                       {renderInlineRecordChatter(editingGroup.groupCode)}
                     </div>
@@ -9201,102 +9249,104 @@ export default function App() {
                   </button>
                 </div>
 
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>ID / Username</th>
-                      <th>Full Name &amp; Title</th>
-                      <th>Station</th>
-                      <th>Assigned User Group</th>
-                      <th>Inherited Group Permissions</th>
-                      <th>Status</th>
-                      <th>Related History</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {adminUsers
-                      .filter(u => {
-                        const q = configSearch.trim().toLowerCase();
-                        if (!q) return true;
-                        return (
-                          u.username.toLowerCase().includes(q) ||
-                          u.fullName.toLowerCase().includes(q) ||
-                          (u.groupName || u.accessRole || '').toLowerCase().includes(q) ||
-                          u.stationCode.toLowerCase().includes(q)
-                        );
-                      })
-                      .map(u => (
-                        <tr
-                          key={u.userId}
-                          className="clickable-row"
-                          onClick={() => openUserRecord(u.userId)}
-                        >
-                          <td>
-                            <strong>#{u.userId}</strong> • <code>{u.username}</code>
-                          </td>
-                          <td>
-                            <strong>{u.fullName}</strong>
-                            <br />
-                            <small className="muted">
-                              {u.roleTitle} ({u.department})
-                            </small>
-                          </td>
-                          <td>
-                            <code>{u.stationCode}</code>
-                          </td>
-                          <td onClick={e => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              className="rel-entity-link"
-                              onClick={() => openUserGroupRecord(u.groupId)}
-                            >
-                              {u.groupName || u.accessRole}
-                            </button>
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                              {u.canDispatch && <span className="badge badge-Done">Dispatch</span>}
-                              {u.canManageFleet && <span className="badge badge-Done">Fleet</span>}
-                              {u.canManagePolicies && <span className="badge badge-Done">Policies</span>}
-                              {u.canManageBilling && <span className="badge badge-Done">Billing</span>}
-                              {u.canManageUsers && <span className="badge badge-Approved">Users &amp; Groups</span>}
-                            </div>
-                          </td>
-                          <td>
-                            {u.isActive ? (
-                              <span className="badge badge-Done">Active</span>
-                            ) : (
-                              <span className="badge badge-Rejected">Deactivated</span>
-                            )}
-                          </td>
-                          <td>
-                            {u.createdTowCount} tows • {u.auditActionCount} audits
-                          </td>
-                          <td onClick={e => e.stopPropagation()}>
-                            <div className="action-btn-group">
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>ID / Username</th>
+                        <th>Full Name &amp; Title</th>
+                        <th>Station</th>
+                        <th>Assigned User Group</th>
+                        <th>Inherited Group Permissions</th>
+                        <th>Status</th>
+                        <th>Related History</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminUsers
+                        .filter(u => {
+                          const q = configSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            u.username.toLowerCase().includes(q) ||
+                            u.fullName.toLowerCase().includes(q) ||
+                            (u.groupName || u.accessRole || '').toLowerCase().includes(q) ||
+                            u.stationCode.toLowerCase().includes(q)
+                          );
+                        })
+                        .map(u => (
+                          <tr
+                            key={u.userId}
+                            className="clickable-row"
+                            onClick={() => openUserRecord(u.userId)}
+                          >
+                            <td>
+                              <strong>#{u.userId}</strong> • <code>{u.username}</code>
+                            </td>
+                            <td>
+                              <strong>{u.fullName}</strong>
+                              <br />
+                              <small className="muted">
+                                {u.roleTitle} ({u.department})
+                              </small>
+                            </td>
+                            <td>
+                              <code>{u.stationCode}</code>
+                            </td>
+                            <td onClick={e => e.stopPropagation()}>
                               <button
                                 type="button"
-                                className="btn-xs"
-                                onClick={() => openUserRecord(u.userId)}
+                                className="rel-entity-link"
+                                onClick={() => openUserGroupRecord(u.groupId)}
                               >
-                                Open User Sheet
+                                {u.groupName || u.accessRole}
                               </button>
-                              {u.userId !== currentUser.userId && (
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                {u.canDispatch && <span className="badge badge-Done">Dispatch</span>}
+                                {u.canManageFleet && <span className="badge badge-Done">Fleet</span>}
+                                {u.canManagePolicies && <span className="badge badge-Done">Policies</span>}
+                                {u.canManageBilling && <span className="badge badge-Done">Billing</span>}
+                                {u.canManageUsers && <span className="badge badge-Approved">Users &amp; Groups</span>}
+                              </div>
+                            </td>
+                            <td>
+                              {u.isActive ? (
+                                <span className="badge badge-Done">Active</span>
+                              ) : (
+                                <span className="badge badge-Rejected">Deactivated</span>
+                              )}
+                            </td>
+                            <td>
+                              {u.createdTowCount} tows • {u.auditActionCount} audits
+                            </td>
+                            <td onClick={e => e.stopPropagation()}>
+                              <div className="action-btn-group">
                                 <button
                                   type="button"
-                                  className="btn-xs btn-reject"
-                                  onClick={() => handleAdminDeleteUser(u)}
+                                  className="btn-xs"
+                                  onClick={() => openUserRecord(u.userId)}
                                 >
-                                  Delete
+                                  Open User Sheet
                                 </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                                {u.userId !== currentUser.userId && (
+                                  <button
+                                    type="button"
+                                    className="btn-xs btn-reject"
+                                    onClick={() => handleAdminDeleteUser(u)}
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -9422,10 +9472,10 @@ export default function App() {
                           </div>
 
                           <div className="form-row" style={{ marginTop: '8px' }}>
-                            <label>Reset Password (Optional — BCrypt Cost=12)</label>
+                            <label>Reset Password (Optional — Min 8 characters)</label>
                             <input
                               type="password"
-                              placeholder="Leave blank to keep existing BCrypt hash..."
+                              placeholder="Leave blank to keep existing password..."
                               value={editingUser.newPassword || ''}
                               onChange={e =>
                                 setEditingUser({ ...editingUser, newPassword: e.target.value })
@@ -9532,109 +9582,115 @@ export default function App() {
 
                       <div className="erp-notebook-page">
                         {userNotebookTab === 'tows' && (
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Request #</th>
-                                <th>Customer &amp; Vehicle</th>
-                                <th>Issue Type</th>
-                                <th>Road Distance</th>
-                                <th>Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {userTows.map(r => (
-                                <tr
-                                  key={r.towRequestId}
-                                  className="clickable-row"
-                                  onClick={() => openTowRequestRecord(r.towRequestId)}
-                                >
-                                  <td>
-                                    <strong>{r.requestNumber}</strong>
-                                  </td>
-                                  <td>
-                                    {r.customerName} • <code>{r.vehiclePlate}</code>
-                                  </td>
-                                  <td>{r.issueType}</td>
-                                  <td>{r.actualDistanceKm} km</td>
-                                  <td>
-                                    <span className={`badge badge-${r.status}`}>{r.status}</span>
-                                  </td>
+                          <div className="table-scroll">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Request #</th>
+                                  <th>Customer &amp; Vehicle</th>
+                                  <th>Issue Type</th>
+                                  <th>Road Distance</th>
+                                  <th>Status</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {userTows.map(r => (
+                                  <tr
+                                    key={r.towRequestId}
+                                    className="clickable-row"
+                                    onClick={() => openTowRequestRecord(r.towRequestId)}
+                                  >
+                                    <td>
+                                      <strong>{r.requestNumber}</strong>
+                                    </td>
+                                    <td>
+                                      {r.customerName} • <code>{r.vehiclePlate}</code>
+                                    </td>
+                                    <td>{r.issueType}</td>
+                                    <td>{r.actualDistanceKm} km</td>
+                                    <td>
+                                      <span className={`badge badge-${r.status}`}>{formatLabel(r.status)}</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
 
                         {userNotebookTab === 'payments' && (
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Payment #</th>
-                                <th>Invoice</th>
-                                <th>Payer</th>
-                                <th>Amount</th>
-                                <th>Method &amp; Paid At</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {userPayments.map(pm => (
-                                <tr
-                                  key={pm.paymentId}
-                                  className="clickable-row"
-                                  onClick={() => openInvoiceRecord(pm.invoiceId)}
-                                >
-                                  <td>#{pm.paymentId}</td>
-                                  <td>
-                                    <strong>{pm.invoiceNumber}</strong>
-                                  </td>
-                                  <td>
-                                    {pm.payerName} ({pm.payerType})
-                                  </td>
-                                  <td>
-                                    <strong className="text-green">+${pm.amountPaid}</strong>
-                                  </td>
-                                  <td>
-                                    {pm.paymentMethod} • {pm.paidAt}
-                                  </td>
+                          <div className="table-scroll">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Payment #</th>
+                                  <th>Invoice</th>
+                                  <th>Payer</th>
+                                  <th>Amount</th>
+                                  <th>Method &amp; Paid At</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {userPayments.map(pm => (
+                                  <tr
+                                    key={pm.paymentId}
+                                    className="clickable-row"
+                                    onClick={() => openInvoiceRecord(pm.invoiceId)}
+                                  >
+                                    <td>#{pm.paymentId}</td>
+                                    <td>
+                                      <strong>{pm.invoiceNumber}</strong>
+                                    </td>
+                                    <td>
+                                      {pm.payerName} ({formatLabel(pm.payerType)})
+                                    </td>
+                                    <td>
+                                      <strong className="text-green">+${pm.amountPaid}</strong>
+                                    </td>
+                                    <td>
+                                      {pm.paymentMethod} • {pm.paidAt}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
 
                         {userNotebookTab === 'audits' && (
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Audit #</th>
-                                <th>Request #</th>
-                                <th>Transition</th>
-                                <th>Action Note</th>
-                                <th>Timestamp</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {userAudits.map(a => (
-                                <tr
-                                  key={a.auditId}
-                                  className="clickable-row"
-                                  onClick={() => openTowRequestRecord(a.towRequestId)}
-                                >
-                                  <td>#{a.auditId}</td>
-                                  <td>
-                                    <strong>{a.requestNumber}</strong>
-                                  </td>
-                                  <td>
-                                    <code>{a.oldStatus}</code> →{' '}
-                                    <span className={`badge badge-${a.newStatus}`}>{a.newStatus}</span>
-                                  </td>
-                                  <td>{a.actionNote}</td>
-                                  <td>{a.changedAt}</td>
+                          <div className="table-scroll">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Audit #</th>
+                                  <th>Request #</th>
+                                  <th>Transition</th>
+                                  <th>Action Note</th>
+                                  <th>Timestamp</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {userAudits.map(a => (
+                                  <tr
+                                    key={a.auditId}
+                                    className="clickable-row"
+                                    onClick={() => openTowRequestRecord(a.towRequestId)}
+                                  >
+                                    <td>#{a.auditId}</td>
+                                    <td>
+                                      <strong>{a.requestNumber}</strong>
+                                    </td>
+                                    <td>
+                                      <code>{a.oldStatus}</code> →{' '}
+                                      <span className={`badge badge-${a.newStatus}`}>{formatLabel(a.newStatus)}</span>
+                                    </td>
+                                    <td>{a.actionNote}</td>
+                                    <td>{a.changedAt}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
                       </div>
                       {renderInlineRecordChatter(editingUser.username)}
@@ -9684,10 +9740,10 @@ export default function App() {
                           />
                         </div>
                         <div className="form-row" style={{ marginTop: '8px' }}>
-                          <label>Initial Password (BCrypt Cost=12)</label>
+                          <label>Initial Portal Password</label>
                           <input
                             type="password"
-                            placeholder="Min 6 characters"
+                            placeholder="Min 8 characters"
                             value={newUserForm.password}
                             onChange={e =>
                               setNewUserForm({ ...newUserForm, password: e.target.value })
@@ -9809,16 +9865,7 @@ export default function App() {
          ============================================================================ */}
       {Boolean(CHANGE_LOG_SECTIONS[activeTab]) && (
         <>
-          {!changeLogOpen && (
-            <button
-              type="button"
-              className="changelog-edge-tab"
-              onClick={() => setChangeLogOpen(true)}
-              title={`Open ${CHANGE_LOG_SECTIONS[activeTab]} Change Log`}
-            >
-              Change Log
-            </button>
-          )}
+
 
           {changeLogOpen &&
             (() => {
@@ -9842,13 +9889,17 @@ export default function App() {
                   })
                 : changeLogs;
 
-              let lastDateGroup = '';
-
               return (
-                <aside
-                  className="changelog-side-drawer"
-                  aria-label={`${sectionLabel} Change Log`}
-                >
+                <>
+                  <div
+                    className="changelog-backdrop"
+                    onClick={() => setChangeLogOpen(false)}
+                    aria-hidden="true"
+                  />
+                  <aside
+                    className="changelog-side-drawer"
+                    aria-label={`${sectionLabel} Change Log`}
+                  >
                   <div className="o-chatter-topbar">
                     <span className="o-chatter-title">
                       Change Log — {sectionLabel}
@@ -9882,94 +9933,14 @@ export default function App() {
                   </div>
 
                   <div className="o-chatter-stream">
-                    {filteredEvents.length === 0 ? (
-                      <p className="o-chatter-note" style={{ textAlign: 'center', marginTop: '20px' }}>
-                        {changeLogLoading
-                          ? 'Loading...'
-                          : `No changes logged yet for ${sectionLabel}.`}
-                      </p>
-                    ) : (
-                      filteredEvents.map(ev => {
-                        const rawStamp = String(ev.changedAt || '');
-                        const datePart = rawStamp.length >= 10 ? rawStamp.slice(0, 10) : 'Recent';
-                        const timePart = rawStamp.length >= 19 ? rawStamp.slice(11, 19) : rawStamp;
-                        const showDateSep = datePart !== lastDateGroup;
-                        lastDateGroup = datePart;
-
-                        const op = String(ev.operationType || 'UPDATE').toUpperCase();
-                        const details = ev.details || [];
-
-                        return (
-                          <React.Fragment key={ev.changeEventId}>
-                            {showDateSep && (
-                              <div className="o-chatter-date-sep">{datePart}</div>
-                            )}
-                            <div className="o-chatter-message">
-                              <div className="o-chatter-msg-head">
-                                <div>
-                                  <span className="o-chatter-author">
-                                    {ev.changedByFullName || ev.changedByUsername || 'System'}
-                                  </span>{' '}
-                                  <span className="o-chatter-record-ref">
-                                    ({ev.changedByUsername || 'system'}) · {ev.entityCode || `#${ev.entityId}`}
-                                  </span>
-                                </div>
-                                <span className="o-chatter-time">{timePart}</span>
-                              </div>
-
-                              {op === 'CREATE' && (
-                                <div className="o-chatter-note">Record created</div>
-                              )}
-                              {op === 'DELETE' && (
-                                <div className="o-chatter-note">Record deleted</div>
-                              )}
-
-                              {details.length > 0 && (
-                                <ul className="o-chatter-tracking-list">
-                                  {details.map(d => {
-                                    const oldText =
-                                      d.oldValue !== null && d.oldValue !== undefined && d.oldValue !== ''
-                                        ? String(d.oldValue)
-                                        : 'None';
-                                    const newText =
-                                      d.newValue !== null && d.newValue !== undefined && d.newValue !== ''
-                                        ? String(d.newValue)
-                                        : 'None';
-
-                                    if (op === 'CREATE') {
-                                      return (
-                                        <li key={d.changeDetailId}>
-                                          <span className="o-chatter-field">{d.fieldName}:</span>{' '}
-                                          <span className="o-chatter-new">{newText}</span>
-                                        </li>
-                                      );
-                                    }
-                                    if (op === 'DELETE') {
-                                      return (
-                                        <li key={d.changeDetailId}>
-                                          <span className="o-chatter-field">{d.fieldName}:</span>{' '}
-                                          <span className="o-chatter-old">{oldText}</span>
-                                        </li>
-                                      );
-                                    }
-                                    return (
-                                      <li key={d.changeDetailId}>
-                                        <span className="o-chatter-field">{d.fieldName}:</span>{' '}
-                                        <span className="o-chatter-old">{oldText}</span>
-                                        <span className="o-chatter-arrow">→</span>
-                                        <span className="o-chatter-new">{newText}</span>
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              )}
-                            </div>
-                          </React.Fragment>
-                        );
-                      })
+                    {renderOdooLogEntries(
+                      filteredEvents,
+                      changeLogLoading,
+                      `No changes logged yet for ${sectionLabel}.`
                     )}
                   </div>
-                </aside>
+                  </aside>
+                </>
               );
             })()}
         </>

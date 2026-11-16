@@ -77,11 +77,14 @@
 html {
   background: var(--obsidian-950);
   scroll-behavior: smooth;
+  max-width: 100%;
+  overflow-x: clip;
 }
 
 body {
   min-width: 320px;
-  overflow-x: hidden;
+  max-width: 100%;
+  overflow-x: clip;
   font-family: var(--font-sans);
   background-color: var(--bg-canvas);
   color: var(--text-main);
@@ -265,7 +268,7 @@ code {
 
 .solar-nav-links a {
   text-decoration: none;
-  color: rgba(11, 15, 25, 0.84);
+  color: rgba(11, 15, 25, 0.88);
   font-size: 13.5px;
   font-weight: 700;
   transition: color 0.18s ease, transform 0.18s ease;
@@ -278,25 +281,31 @@ code {
 .solar-nav-right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
+  flex-shrink: 0;
 }
 
 .solar-hotline {
   font-size: 12.5px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.96);
-  letter-spacing: 0.02em;
+  font-weight: 800;
+  color: var(--obsidian-950);
+  background: rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  letter-spacing: 0.01em;
 }
 
 .solar-black-pill {
   text-decoration: none;
   background: var(--obsidian-900);
   color: #ffffff;
-  padding: 10px 22px;
+  padding: 10px 20px;
   border-radius: var(--radius-pill);
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.01em;
+  white-space: nowrap;
   box-shadow: 0 10px 24px rgba(11, 15, 25, 0.28);
   transition: transform 0.18s ease, background 0.18s ease;
 }
@@ -313,29 +322,29 @@ code {
   flex: 1;
   width: min(100%, 1480px);
   margin: 0 auto;
-  padding: clamp(12px, 2vw, 24px) clamp(18px, 3.5vw, 48px) clamp(28px, 4vw, 44px);
+  padding: clamp(12px, 2vw, 24px) clamp(14px, 3.2vw, 48px) clamp(28px, 4vw, 44px);
   display: grid;
-  grid-template-columns: minmax(0, 1.32fr) minmax(360px, 430px);
-  gap: clamp(24px, 3.5vw, 48px);
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 420px);
+  gap: clamp(20px, 3.2vw, 44px);
   align-items: center;
 }
 
 .solar-showcase-col {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: clamp(12px, 2vw, 28px);
+  gap: clamp(12px, 2vw, 26px);
   align-items: center;
+  min-width: 0;
 }
 
-/* Vertical Scroll Indicator (Inspired by Reference 2) */
 .solar-scroll-cue {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   text-decoration: none;
-  color: #ffffff;
-  opacity: 0.92;
+  color: var(--obsidian-950);
+  opacity: 0.85;
   align-self: end;
   padding-bottom: 18px;
   transition: transform 0.2s ease, opacity 0.2s ease;
@@ -349,10 +358,16 @@ code {
 .solar-scroll-label {
   writing-mode: vertical-rl;
   transform: rotate(180deg);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11.5px;
+  font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.solar-scroll-line {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .solar-headline-stage {
@@ -462,8 +477,8 @@ code {
 }
 
 .solar-chip-glass {
-  background: rgba(255, 255, 255, 0.28);
-  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.52);
   color: var(--obsidian-950);
   padding: 5px 13px;
   border-radius: var(--radius-pill);
@@ -482,12 +497,11 @@ code {
 .solar-how-it-works p {
   font-size: 12.5px;
   line-height: 1.55;
-  color: rgba(255, 255, 255, 0.96);
-  font-weight: 500;
-  text-shadow: 0 1px 4px rgba(120, 65, 0, 0.22);
+  color: var(--obsidian-900);
+  font-weight: 600;
 }
 
-/* Floating Obsidian Login Card (Inspired by Reference 1's Floating Dark Card) */
+/* Floating Obsidian Login Card */
 .obsidian-login-wrap {
   position: relative;
   z-index: 8;
@@ -507,7 +521,7 @@ code {
 
 .obsidian-login-pill-header {
   background: #ffffff;
-  color: var(--solar-500);
+  color: #c2410c;
   font-family: var(--font-display);
   font-size: 15px;
   font-weight: 800;
@@ -652,26 +666,6 @@ code {
   gap: 14px;
 }
 
-.obsidian-shift-prompt {
-  text-align: center;
-  font-size: 12.5px;
-  color: #cbd5e1;
-}
-
-.obsidian-shift-toggle {
-  background: transparent;
-  border: none;
-  color: var(--solar-400);
-  font-weight: 800;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-
-.obsidian-shift-toggle:hover {
-  color: var(--solar-300);
-  text-decoration: underline;
-}
-
 .obsidian-protocol-strip {
   display: flex;
   flex-direction: column;
@@ -680,12 +674,90 @@ code {
   padding-top: 4px;
 }
 
+.obsidian-shift-prompt {
+  font-size: 12.5px;
+  color: #cbd5e1;
+  text-align: center;
+}
+
+.obsidian-shift-toggle {
+  background: transparent;
+  border: none;
+  color: var(--solar-300);
+  font-size: 12.5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.obsidian-shift-toggle:hover {
+  text-decoration: underline;
+}
+
+.obsidian-operators-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.obsidian-op-chip {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 9px 12px;
+  text-align: left;
+  cursor: pointer;
+  color: #f8fafc;
+  min-width: 0;
+  transition: all 0.16s ease;
+}
+
+.obsidian-op-chip:hover {
+  background: rgba(255, 122, 0, 0.12);
+  border-color: rgba(255, 149, 0, 0.45);
+}
+
+.obsidian-op-chip.active {
+  background: rgba(255, 107, 0, 0.18);
+  border-color: var(--solar-400);
+  box-shadow: 0 0 0 1px rgba(255, 149, 0, 0.35);
+}
+
+.obsidian-op-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.obsidian-op-role {
+  font-size: 11px;
+  color: #94a3b8;
+  margin: 1px 0 4px;
+}
+
+.obsidian-op-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--solar-300);
+}
+
+.obsidian-op-meta code {
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  color: var(--solar-300);
+  padding: 2px 6px;
+  font-size: 10.5px;
+}
+
 .obsidian-proto-label {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #64748b;
+  color: #94a3b8;
 }
 
 .obsidian-proto-icons {
@@ -718,83 +790,14 @@ code {
   transform: translateY(-2px);
 }
 
-.obsidian-operators-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.obsidian-op-chip {
-  text-align: left;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #f8fafc;
-  cursor: pointer;
-  min-width: 0;
-  transition: all 0.16s ease;
-}
-
-.obsidian-op-chip:hover {
-  background: rgba(255, 122, 0, 0.1);
-  border-color: rgba(255, 149, 0, 0.45);
-}
-
-.obsidian-op-chip.active {
-  background: rgba(255, 107, 0, 0.16);
-  border-color: var(--solar-400);
-  box-shadow: 0 0 0 1px rgba(255, 149, 0, 0.35);
-}
-
-.obsidian-op-name {
-  font-size: 12px;
-  font-weight: 700;
-  color: #ffffff;
-}
-
-.obsidian-op-role {
-  font-size: 10.5px;
-  color: #94a3b8;
-  margin: 1px 0 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.obsidian-op-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  font-size: 10px;
-  color: var(--solar-300);
-}
-
-.obsidian-op-meta code {
-  background: rgba(255, 255, 255, 0.07);
-  border: none;
-  color: var(--solar-300);
-  padding: 1px 4px;
-  font-size: 9.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.obsidian-op-meta span {
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-/* Stage 2: Midnight Horizon Architecture Showcase (Inspired by Reference 1's Night Sky + Sunset Glow) */
+/* Stage 2: Midnight Horizon Architecture Showcase */
 .midnight-horizon-section {
   position: relative;
   background:
     radial-gradient(ellipse 75% 240px at 50% 0%, rgba(255, 122, 0, 0.24), transparent 75%),
     linear-gradient(180deg, #090d16 0%, #0d1322 100%);
   border-top: 1px solid rgba(255, 149, 0, 0.3);
-  padding: clamp(56px, 7vw, 92px) clamp(18px, 3.5vw, 48px);
+  padding: clamp(48px, 7vw, 88px) clamp(16px, 3.5vw, 48px);
 }
 
 .midnight-horizon-inner {
@@ -804,7 +807,7 @@ code {
 
 .midnight-section-head {
   max-width: 720px;
-  margin-bottom: 40px;
+  margin-bottom: 36px;
 }
 
 .midnight-eyebrow {
@@ -822,7 +825,7 @@ code {
 
 .midnight-section-head h2 {
   font-family: var(--font-display);
-  font-size: clamp(30px, 4vw, 46px);
+  font-size: clamp(28px, 4vw, 46px);
   font-weight: 900;
   line-height: 1.08;
   letter-spacing: -0.03em;
@@ -831,7 +834,7 @@ code {
 }
 
 .midnight-section-head h2 span {
-  color: var(--solar-500);
+  color: var(--solar-400);
 }
 
 .midnight-section-head p {
@@ -848,10 +851,11 @@ code {
 }
 
 .midnight-stat-card {
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-lg);
-  padding: 22px;
+  padding: 20px;
+  min-width: 0;
   transition: transform 0.2s ease, border-color 0.2s ease;
 }
 
@@ -862,7 +866,7 @@ code {
 
 .midnight-stat-val {
   font-family: var(--font-display);
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 900;
   color: var(--solar-400);
   letter-spacing: -0.02em;
@@ -892,7 +896,8 @@ code {
   background: linear-gradient(160deg, rgba(24, 32, 50, 0.72) 0%, rgba(11, 15, 25, 0.88) 100%);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-lg);
-  padding: 26px;
+  padding: 24px;
+  min-width: 0;
   transition: transform 0.2s ease, border-color 0.2s ease;
 }
 
@@ -936,33 +941,74 @@ code {
 ============================================================================ */
 .app-shell {
   min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg-canvas);
 }
 
+.app-shell > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .o-main-navbar {
+  position: relative;
   background: var(--obsidian-900);
   color: #ffffff;
   min-height: 58px;
   padding: 8px 16px;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 10px 30px rgba(7, 10, 16, 0.2);
   z-index: 2000;
-  gap: 8px 12px;
+  gap: 10px;
 }
 
 .o-navbar-left {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 14px;
+  gap: 12px;
   min-width: 0;
   flex: 1 1 auto;
+}
+
+.o-brand-mobile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.o-mobile-header-actions,
+.o-mobile-nav-footer {
+  display: none;
+}
+
+.mobile-menu-toggle {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+  font-size: 19px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mobile-menu-toggle.active,
+.mobile-menu-toggle:hover {
+  background: var(--solar-500);
+  border-color: var(--solar-500);
 }
 
 .o-app-brand {
@@ -1093,6 +1139,11 @@ code {
   font-weight: 700;
 }
 
+.o-nav-dropdown-right {
+  left: auto;
+  right: 0;
+}
+
 .o-navbar-systray {
   display: flex;
   align-items: center;
@@ -1105,7 +1156,7 @@ code {
   background: rgba(16, 185, 129, 0.16);
   color: #6ee7b7;
   border: 1px solid rgba(16, 185, 129, 0.42);
-  padding: 7px 14px;
+  padding: 7px 13px;
   border-radius: var(--radius-pill);
   font-weight: 700;
   font-size: 12px;
@@ -1121,6 +1172,11 @@ code {
   background: #10b981;
   color: #ffffff;
   box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
+}
+
+.btn-cti-compact {
+  padding: 7px 11px;
+  min-height: 40px;
 }
 
 .cti-live-dot {
@@ -1236,7 +1292,7 @@ code {
 }
 
 .o-kpi-chip strong {
-  color: var(--solar-600);
+  color: #c2410c;
   font-weight: 800;
   margin-left: 5px;
 }
@@ -1291,17 +1347,6 @@ code {
 .btn-primary:disabled {
   opacity: 0.65;
   cursor: not-allowed;
-}
-
-.btn-erp-teal {
-  background: var(--obsidian-900);
-  color: #ffffff;
-  border: none;
-  padding: 9px 16px;
-  border-radius: var(--radius-sm);
-  font-weight: 700;
-  font-size: 13px;
-  cursor: pointer;
 }
 
 .btn-erp-secondary,
@@ -1446,10 +1491,16 @@ code {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.01em;
+  white-space: nowrap;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #cbd5e1;
 }
 
 .badge-Available,
-.badge-Done {
+.badge-Done,
+.badge-Paid,
+.badge-Active {
   background: #ecfdf5;
   color: #047857;
   border: 1px solid #a7f3d0;
@@ -1457,7 +1508,9 @@ code {
 
 .badge-Busy,
 .badge-InProgress,
-.badge-EnRoute {
+.badge-EnRoute,
+.badge-Towing,
+.badge-OnJob {
   background: #eff6ff;
   color: #1d4ed8;
   border: 1px solid #bfdbfe;
@@ -1469,13 +1522,17 @@ code {
   border: 1px solid #fed7aa;
 }
 
-.badge-PendingInsurance {
+.badge-PendingInsurance,
+.badge-PartiallyPaid,
+.badge-OnLeave,
+.badge-Maintenance {
   background: #fefce8;
   color: #a16207;
   border: 1px solid #fde68a;
 }
 
-.badge-Draft {
+.badge-Draft,
+.badge-Unpaid {
   background: #f1f5f9;
   color: #475569;
   border: 1px solid #cbd5e1;
@@ -1484,7 +1541,9 @@ code {
 .badge-Rejected,
 .badge-UnableToLoad,
 .badge-Offline,
-.badge-OffDuty {
+.badge-OffDuty,
+.badge-Expired,
+.badge-Suspended {
   background: #fef2f2;
   color: #b91c1c;
   border: 1px solid #fecaca;
@@ -1635,7 +1694,7 @@ code {
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--solar-600);
+  color: #c2410c;
   display: block;
   margin-bottom: 4px;
 }
@@ -1754,6 +1813,19 @@ select:focus {
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-width: 0;
+}
+
+.split-inputs > input,
+.split-inputs > select,
+.erp-plate-flex > input {
+  min-width: 0;
+  flex: 1 1 120px;
+}
+
+.plate-code-select {
+  width: 135px !important;
+  flex: 0 0 135px;
 }
 
 .btn-pin-picker {
@@ -1820,7 +1892,6 @@ select:focus {
   gap: 5px;
 }
 
-.form-row-2,
 .two-col-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1882,7 +1953,8 @@ select:focus {
 ============================================================================ */
 .cad-map-stage {
   position: relative;
-  height: calc(100vh - 62px);
+  height: calc(100dvh - 58px);
+  min-height: 460px;
   width: 100%;
   overflow: hidden;
   background: #e2e8f0;
@@ -2147,6 +2219,7 @@ select:focus {
   background: #e2e8f0;
   overflow: hidden;
   user-select: none;
+  touch-action: none;
   cursor: grab;
 }
 
@@ -2203,6 +2276,12 @@ select:focus {
   justify-content: center;
 }
 
+.gmap-circle-pin-dropoff {
+  width: 30px !important;
+  height: 30px !important;
+  font-size: 11px !important;
+}
+
 .gmap-circle-pin {
   position: absolute;
   pointer-events: auto;
@@ -2239,11 +2318,12 @@ select:focus {
   border: 1px solid rgba(255, 149, 0, 0.45);
   border-radius: 14px;
   padding: 12px 14px;
-  min-width: 240px;
+  min-width: 210px;
+  max-width: min(300px, calc(100vw - 24px));
   color: #f8fafc;
   font-size: 12px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
-  z-index: 600;
+  z-index: 1200;
 }
 
 .gmap-popup-header {
@@ -2307,6 +2387,7 @@ select:focus {
   bottom: 16px;
   left: 16px;
   display: flex;
+  align-items: center;
   gap: 4px;
   background: rgba(11, 15, 25, 0.9);
   backdrop-filter: blur(12px);
@@ -2315,6 +2396,13 @@ select:focus {
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   z-index: 500;
+}
+
+.gmap-layer-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.16);
+  margin: 0 2px;
 }
 
 .gmap-layer-switcher button {
@@ -2331,6 +2419,11 @@ select:focus {
 
 .gmap-layer-switcher button.active {
   background: var(--solar-500);
+  color: #ffffff;
+}
+
+.gmap-layer-switcher button.traffic-toggle.active {
+  background: #10b981;
   color: #ffffff;
 }
 
@@ -2359,10 +2452,9 @@ select:focus {
 ============================================================================ */
 .kanban-board {
   display: grid;
-  grid-template-columns: repeat(7, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 14px;
-  overflow-x: auto;
-  padding-bottom: 12px;
+  padding-bottom: 8px;
 }
 
 .kanban-column {
@@ -2456,9 +2548,49 @@ select:focus {
 
 /* Modern Data Tables */
 .table-scroll {
+  width: 100%;
+  max-width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid var(--border-color);
   border-radius: 14px;
+}
+
+.data-table td code {
+  white-space: nowrap;
+}
+
+.metric-item {
+  min-width: 0;
+}
+
+.metric-item code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.lab-result-box {
+  background: var(--bg-bento);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.perf-results {
+  margin-top: 8px;
+}
+
+.archive-pagination-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0 12px;
+}
+
+.picker-coords-inline {
+  margin-left: 8px;
 }
 
 .data-table {
@@ -2604,24 +2736,6 @@ select:focus {
   color: #991b1b;
 }
 
-.perf-filter-bar {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
-  gap: 12px;
-  align-items: end;
-  margin: 18px 0;
-  padding: 16px;
-  background: var(--bg-bento);
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-}
-
-.perf-btns {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 /* ============================================================================
    10. MODALS & TOAST NOTIFICATIONS
 ============================================================================ */
@@ -2758,26 +2872,10 @@ select:focus {
 
 .modal-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
   margin-top: 14px;
-}
-
-.incoming-call-modal {
-  border-top: 5px solid #10b981;
-}
-
-.incoming-call-ring-badge {
-  display: inline-block;
-  background: #ecfdf5;
-  color: #047857;
-  border: 1px solid #a7f3d0;
-  padding: 4px 12px;
-  border-radius: var(--radius-pill);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  margin-bottom: 10px;
 }
 
 .warning-modal {
@@ -2848,9 +2946,29 @@ select:focus {
 }
 
 /* ============================================================================
-   11. RESPONSIVE BREAKPOINTS & REDUCED MOTION
+   11. RESPONSIVE BREAKPOINTS (DESKTOP, TABLET & MOBILE) & REDUCED MOTION
 ============================================================================ */
-@media (max-width: 1140px) {
+@media (max-width: 1480px) {
+  .o-navbar-systray .o-systray-pill,
+  .o-app-brand-badge {
+    display: none;
+  }
+
+  .o-nav-link {
+    padding: 6px 8.5px;
+    font-size: 11.5px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .split-inputs,
+  .erp-plate-flex {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 1120px) {
+  /* Landing & Hero */
   .solar-nav-links,
   .solar-hotline {
     display: none;
@@ -2858,11 +2976,11 @@ select:focus {
 
   .solar-hero-grid {
     grid-template-columns: 1fr;
-    gap: 32px;
+    gap: 28px;
   }
 
   .obsidian-login-wrap {
-    max-width: 560px;
+    max-width: 500px;
     width: 100%;
     margin: 0 auto;
   }
@@ -2875,13 +2993,97 @@ select:focus {
     grid-template-columns: 1fr;
   }
 
-  .o-navbar-left {
-    overflow-x: auto;
-    scrollbar-width: thin;
+  /* Authenticated Hamburger Mobile / Tablet Navbar (Zero Dropdown Clipping!) */
+  .o-main-navbar {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 8px 14px;
+    gap: 0;
   }
 
-  .o-navbar-systray .o-systray-pill {
+  .o-navbar-left {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 0;
+    overflow: visible;
+  }
+
+  .o-brand-mobile-row {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .o-mobile-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .o-navbar-systray {
     display: none;
+  }
+
+  .o-menu-sections {
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 4px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    overflow: visible;
+  }
+
+  .o-menu-sections.mobile-open {
+    display: flex;
+  }
+
+  .o-nav-link {
+    width: 100%;
+    text-align: left;
+    padding: 10px 14px;
+    min-height: 42px;
+    font-size: 13.5px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .o-nav-dropdown-wrap {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .o-nav-dropdown-menu,
+  .o-nav-dropdown-right {
+    position: static;
+    width: 100%;
+    min-width: 0;
+    margin-top: 4px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: none;
+    padding: 4px;
+  }
+
+  .o-dropdown-item {
+    min-height: 42px;
+    padding: 10px 14px;
+  }
+
+  .o-mobile-nav-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
   }
 }
 
@@ -2901,37 +3103,9 @@ select:focus {
   .solar-bottom-blurb,
   .erp-group-grid,
   .two-col-grid,
-  .form-row-2,
   .form-row-3,
   .race-cards {
     grid-template-columns: 1fr;
-  }
-
-  .obsidian-operators-grid,
-  .midnight-stats-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .o-main-navbar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-    padding: 10px 14px;
-  }
-
-  .o-navbar-left {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-  }
-
-  .o-menu-sections {
-    overflow-x: auto;
-    padding-bottom: 4px;
-  }
-
-  .o-navbar-systray {
-    justify-content: space-between;
   }
 
   .erp-field-row {
@@ -2939,23 +3113,194 @@ select:focus {
     gap: 5px;
   }
 
+  .o-control-panel {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  .o-cp-left,
+  .o-cp-right {
+    width: 100%;
+  }
+
+  .o-cp-search-input {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  /* Live Map Controls: Never overlap zoom +/- with floating topbar! */
+  .cad-map-stage {
+    height: calc(100dvh - 58px);
+  }
+
   .cad-floating-topbar {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    padding: 8px 12px;
+    border-radius: 14px;
+    gap: 6px;
+  }
+
+  .gmap-zoom-controls {
+    top: auto;
+    bottom: 66px;
     left: 12px;
-    right: 12px;
-    border-radius: 16px;
+  }
+
+  .gmap-zoom-controls button {
+    width: 40px;
+    height: 40px;
   }
 
   .cad-floating-btn {
     top: auto;
-    bottom: 52px;
-    right: 14px;
+    bottom: 66px;
+    right: 12px;
+    padding: 10px 16px;
+    font-size: 12.5px;
+  }
+
+  .gmap-layer-switcher {
+    bottom: 12px;
+    left: 12px;
+  }
+
+  .cad-slide-drawer {
+    top: 10px;
+    right: 10px;
+    bottom: 10px;
+    width: min(390px, calc(100vw - 20px));
+  }
+
+  .o-domain-popover {
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  /* Prevent iOS Safari auto-zoom on form controls & optimize compact phone spacing */
+  input,
+  select,
+  textarea,
+  .obsidian-field input,
+  .o-cp-search-input,
+  .map-search-input,
+  .o-searchview-text-input,
+  .o-domain-rule-row select,
+  .o-domain-rule-row input {
+    font-size: 16px;
+  }
+
+  .solar-top-nav {
+    padding: 14px 14px 6px;
+    gap: 8px;
+  }
+
+  .solar-brand-mark {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+  }
+
+  .solar-brand-text {
+    font-size: 16px;
+  }
+
+  .solar-black-pill {
+    padding: 8px 14px;
+    font-size: 12px;
+  }
+
+  .solar-display-title {
+    font-size: clamp(38px, 11vw, 52px);
+  }
+
+  .obsidian-login-card {
+    padding: 20px 16px 18px;
+    border-radius: 20px;
+  }
+
+  .midnight-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .o-app-brand-badge {
+    display: none;
+  }
+
+  .o-workspace-container {
+    padding: 12px 10px;
+  }
+
+  .erp-sheet-pad,
+  .card {
+    padding: 14px 12px;
+  }
+
+  .erp-group-col {
+    padding: 14px 12px;
+  }
+
+  .o-form-statusbar {
+    padding: 12px;
+  }
+
+  .split-inputs,
+  .erp-plate-flex {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .plate-code-select {
+    width: 100% !important;
+    flex: 1 1 auto;
+  }
+
+  .btn-pin-picker {
+    width: 100%;
+    min-height: 40px;
+  }
+
+  .o-searchview-text-input {
+    min-width: 120px;
+  }
+
+  /* Compact Phone Map HUD & Full-Screen Drawer */
+  .cad-floating-topbar .badge {
+    display: none;
+  }
+
+  .gmap-attribution {
+    display: none;
   }
 
   .cad-slide-drawer {
     inset: 0;
-    width: 100vw;
-    max-width: 100vw;
+    width: 100%;
+    max-width: 100%;
     border-radius: 0;
+    z-index: 1700;
+  }
+
+  .picker-leaflet-container {
+    height: min(260px, 42vh);
+  }
+
+  .picker-coords-inline {
+    display: block;
+    margin-left: 0;
+    margin-top: 2px;
+  }
+
+  .modal-backdrop {
+    padding: 10px;
+  }
+
+  .modal-box {
+    padding: 16px 14px;
+    max-width: calc(100vw - 20px);
   }
 }
 
@@ -3006,8 +3351,10 @@ select:focus {
 
 .config-subnav-pills {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
   background: var(--bg-bento);
   padding: 4px;
   border-radius: var(--radius-pill);
@@ -3058,16 +3405,25 @@ select:focus {
   background: #e5e7eb;
 }
 
+.changelog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(7, 10, 16, 0.35);
+  backdrop-filter: blur(2px);
+  z-index: 3190;
+}
+
 .changelog-side-drawer {
   position: fixed;
-  top: 58px;
+  top: 0;
   right: 0;
   bottom: 0;
   width: 420px;
-  max-width: 95vw;
-  z-index: 960;
+  max-width: min(420px, 94vw);
+  z-index: 3200;
   background: #f8f9fa;
-  border-left: 1px solid #d1d5db;
+  border-left: 1px solid #cbd5e1;
+  box-shadow: -16px 0 48px rgba(7, 10, 16, 0.28);
   display: flex;
   flex-direction: column;
 }
@@ -3096,8 +3452,8 @@ select:focus {
 }
 
 .o-chatter-btn {
-  height: 26px;
-  padding: 0 8px;
+  min-height: 32px;
+  padding: 4px 11px;
   font-size: 12px;
   font-weight: 500;
   background: #ffffff;
@@ -3244,13 +3600,85 @@ select:focus {
   color: #111827;
 }
 
-/* Odoo-Style Domain Filter Builder for 120k+ Archive */
-.o-domain-box {
-  background: #f8fafc;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  padding: 12px 14px;
+/* Odoo-Style Normal Search Write Box + Click-to-Open Domain Popup */
+.o-searchview-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
   margin-bottom: 14px;
+}
+
+.o-searchview-input-box {
+  flex: 1;
+  min-height: 40px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 5px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  cursor: text;
+}
+
+.o-searchview-input-box:focus-within,
+.o-searchview-input-box.open {
+  border-color: #475569;
+}
+
+.o-search-facet {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.o-search-facet-remove {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0 2px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.o-search-facet-remove:hover {
+  color: #0f172a;
+}
+
+.o-searchview-text-input {
+  flex: 1;
+  min-width: 210px;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  height: 28px;
+  padding: 2px 4px !important;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.o-domain-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 80;
+  background: #ffffff;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+  padding: 14px;
 }
 
 .o-domain-header {
@@ -3272,7 +3700,8 @@ select:focus {
 }
 
 .o-domain-match-select {
-  height: 30px;
+  width: auto;
+  height: 32px;
   padding: 0 8px;
   font-size: 12.5px;
   font-weight: 600;
@@ -3285,7 +3714,7 @@ select:focus {
 .o-domain-rules {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
   padding-left: 10px;
   border-left: 2px solid #cbd5e1;
 }
@@ -3331,8 +3760,8 @@ select:focus {
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 10px;
-  padding-top: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid #e2e8f0;
 }
 
@@ -3344,6 +3773,9 @@ select:focus {
 }
 
 @media (max-width: 820px) {
+  .o-searchview-row {
+    flex-direction: column;
+  }
   .o-domain-rule-row {
     grid-template-columns: 1fr;
   }
