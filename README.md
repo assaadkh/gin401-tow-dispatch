@@ -12,7 +12,7 @@ An end-to-end 3-tier relational database application built for **GIN401** using 
 | **2. Configuration Hub (`Users`, `User Groups`, `Tow Trucks`, `Drivers`)** | Unified **Configuration** module with master-detail sheets (`List -> Click Row -> Related 3NF Info`), separating `dbo.UserGroups` (permissions) from `dbo.SystemUsers` (`GroupId` FK) and separating `dbo.Drivers` from `dbo.TowTrucks` (operational shifts managed on the Dispatch Board via `dbo.DriverTruckAssignments`). |
 | **3. Historical Tariffs & Invoice Snapshots** | `dbo.Tariffs` stores effective date windows, base fees, per-KM rates, and night surcharges. `dbo.TowInvoices` references `TariffId` and snapshots charged amounts (`AppliedBaseFee`, `AppliedPricePerKm`, `AppliedNightSurcharge`), protected by `dbo.trg_TowInvoices_ProtectHistoricalPricing` so tariff updates never alter historical invoices. |
 | **4. Separate Insurer vs. Customer Payments** | `dbo.TowInvoices` tracks `InsurerBilledAmount` / `InsurerPaidAmount` / `InsurerBalanceDue` separately from `CustomerBilledAmount` / `CustomerPaidAmount` / `CustomerBalanceDue`. Each partial or full payment is stored as its own row in `dbo.InvoicePayments`. |
-| **5. BCrypt + 3NF `UserGroups` RBAC + `EXECUTE`-Only SQL Security** | `dbo.SystemUsers` uses **BCrypt (`cost = 12`)** (`BCrypt.Net-Next`) with no separate `PasswordSalt` column and inherits permissions from `dbo.UserGroups (GroupId)` (`CanDispatch`, `CanManageFleet`, `CanManagePolicies`, `CanManageBilling`, `CanManageUsers`). `db_tow_dispatcher_role` (`tow_cad_app_login`) has **zero direct table/view permissions** and **`EXECUTE` permissions ONLY on 35 authorized `dbo.usp_*` stored procedures**, called via 100% parameterized `ADO.NET`. |
+| **5. BCrypt + 3NF `UserGroups` RBAC + `EXECUTE`-Only SQL Security** | `dbo.SystemUsers` uses **BCrypt (`cost = 12`)** (`BCrypt.Net-Next`) with no separate `PasswordSalt` column and inherits permissions from `dbo.UserGroups (GroupId)` (`CanDispatch`, `CanManageFleet`, `CanManagePolicies`, `CanManageBilling`, `CanManageUsers`). `db_tow_dispatcher_role` (`tow_cad_app_login`) has **zero direct table/view permissions** and **`EXECUTE` permissions ONLY on 38 authorized `dbo.usp_*` stored procedures**, called via 100% parameterized `ADO.NET`. |
 | **6. `SESSION_CONTEXT` Auditing & Odoo-Style Change Logs** | Every authenticated database connection calls `dbo.usp_SetDispatcherSessionContext` to set and validate `SESSION_CONTEXT` (`AppUserId`, `AppUsername`, `AppFullName`). Set-based triggers populate `dbo.TowAuditLogs` AND normalized `dbo.AuditChangeEvents` + `dbo.AuditChangeDetails` (`FieldName`, `OldValue`, `NewValue`, `ChangedAt`), surfaced as plain Odoo-style Change Logs inside every record Info view and per section. |
 | **7. Validated Road-Distance Routing** | Integrates live **OSRM** road-network routing (`OSRM_DrivingRoute`) plus a validated dispatcher road-distance override (`DispatcherVerifiedEstimate`) and explicit fallback (`HeuristicFallbackEstimate`) alongside `StraightLineDistanceKm`—never presenting straight-line Haversine distance as driving distance. |
 | **8. High-Volume Indexing (>120k Rows)** | Revised covering and filtered nonclustered indexes across `TowRequests`, `Vehicles`, and `TowInvoices` achieving **Index Seeks, 0 Key Lookups, and 0 Sort operators (`0–1 ms` SQL CPU/elapsed)** on the final actual execution plans. |
@@ -22,6 +22,8 @@ An end-to-end 3-tier relational database application built for **GIN401** using 
 ## 2. How to Run the Project
 
 ### Step 1: Initialize the SQL Server Database (19 Normalized 3NF Tables + >120,000 Rows)
+> **Important Prerequisites:** Ensure that SQL Server has **Mixed Mode Authentication** (`SQL Server and Windows Authentication mode`) enabled in SSMS (Server Properties -> Security) and restart the SQL Server service if configured for Windows-only authentication.
+
 Run the 5 SQL scripts in order against your local SQL Server (`localhost`) using `sqlcmd` or SSMS:
 
 ```powershell
@@ -33,7 +35,9 @@ sqlcmd -S localhost -E -I -b -i "sql\05_performance_and_concurrency_tests.sql"
 ```
 
 ### Step 2: Configure Environment Variable (`.env`)
-Copy [`backend/.env.example`](backend/.env.example) to `backend/.env` and set your least-privilege connection string:
+Copy [`backend/.env.example`](backend/.env.example) to `backend/.env` and set your least-privilege connection string.
+> **Security Note:** Generate your own strong database password and random 64-hex token secret locally. **Never commit `backend/.env` to version control.**
+
 ```ini
 TOW_DB_CONNECTION_STRING=Server=localhost;Database=GIN401_TowDispatch;User Id=tow_cad_app_login;Password=YourPasswordHere;TrustServerCertificate=True;
 TRACKER_TOKEN_SECRET=Your64HexCharacterSessionSecretHere
@@ -57,7 +61,8 @@ dotnet run --urls "http://localhost:5050"
 ```
 Then open **[http://localhost:5050](http://localhost:5050)** in your browser.
 
-### Seeded Command Desk Operator Credentials (BCrypt Cost=12)
+### Seeded Command Desk Operator Credentials (Local Demo / Evaluation Only)
+> **Demo-Only Notice:** The credentials below are seeded strictly for local academic evaluation and testing. Rotate all passwords and secrets before any non-local deployment.
 
 | Operator Username | Password | Role & Group | Station |
 | :--- | :--- | :--- | :--- |
@@ -70,9 +75,9 @@ Then open **[http://localhost:5050](http://localhost:5050)** in your browser.
 
 ## 3. Repository Structure
 * [`sql/01_create_schema_and_indexes.sql`](sql/01_create_schema_and_indexes.sql) — Database, 19 normalized 3NF tables (`UserGroups`, `SystemUsers`, `AuditChangeEvents`, `AuditChangeDetails`, etc.), sequences, constraints, and revised covering/filtered indexes
-* [`sql/02_programmability_logic.sql`](sql/02_programmability_logic.sql) — Scalar/TVF functions, 13 set-based `SESSION_CONTEXT` audit & historical pricing triggers, analytical views, and 35 `dbo.usp_*` stored procedures
+* [`sql/02_programmability_logic.sql`](sql/02_programmability_logic.sql) — Scalar/TVF functions, 15 set-based `SESSION_CONTEXT` audit & historical pricing triggers, analytical views, and 38 `dbo.usp_*` stored procedures
 * [`sql/03_seed_120k_data.sql`](sql/03_seed_120k_data.sql) — Normalized `UserGroups`, BCrypt operator accounts, vehicles, drivers, assignments, tariffs, 120,000+ `TowRequests`, 120,000+ `TowInvoices`, and 148,000+ `InvoicePayments`
-* [`sql/04_security_least_privilege.sql`](sql/04_security_least_privilege.sql) — Least-privilege login (`tow_cad_app_login`) and `EXECUTE`-only role (`db_tow_dispatcher_role`) across all 35 authorized procedures
+* [`sql/04_security_least_privilege.sql`](sql/04_security_least_privilege.sql) — Least-privilege login (`tow_cad_app_login`) and `EXECUTE`-only role (`db_tow_dispatcher_role`) across all 38 authorized procedures
 * [`sql/05_performance_and_concurrency_tests.sql`](sql/05_performance_and_concurrency_tests.sql) — Final actual execution plans on >120k rows and automated business-rule/security verification suite
 * [`backend/Program.cs`](backend/Program.cs) — Standalone C# .NET 9 ADO.NET backend (`CommandType.StoredProcedure` + BCrypt + `SESSION_CONTEXT` + OSRM routing)
 * [`frontend/src/App.jsx`](frontend/src/App.jsx) — Standalone React.js CAD Dispatch, Configuration Hub (`Users`, `User Groups`, `Tow Trucks`, `Drivers`), Tariffs, Split Billing, Concurrency, Domain Archive Search, and Odoo-Style Change Logs

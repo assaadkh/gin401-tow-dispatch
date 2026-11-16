@@ -19,13 +19,15 @@
 USE [master];
 GO
 
--- 1. Enable Mixed Mode Authentication on SQL Server instance (if not already enabled)
-EXEC xp_instance_regwrite
-    N'HKEY_LOCAL_MACHINE',
-    N'Software\Microsoft\MSSQLServer\MSSQLServer',
-    N'LoginMode',
-    REG_DWORD,
-    2;
+-- 1. Verify SQL Server Mixed Mode Authentication Status (Configure Mixed Mode explicitly in SSMS + restart MSSQLSERVER if Windows-only)
+IF CAST(SERVERPROPERTY('IsIntegratedSecurityOnly') AS INT) = 1
+BEGIN
+    RAISERROR('WARNING: SQL Server is currently in Windows-Only Authentication mode (IsIntegratedSecurityOnly = 1). Enable "SQL Server and Windows Authentication mode" in SSMS Server Properties -> Security and restart the SQL Server service so [tow_cad_app_login] can authenticate.', 10, 1) WITH NOWAIT;
+END
+ELSE
+BEGIN
+    PRINT 'Verified: SQL Server Mixed Mode Authentication is active (IsIntegratedSecurityOnly = 0).';
+END
 GO
 
 -- 2. Create or Sync Dedicated Application Login (No sysadmin / server-level roles)
@@ -96,7 +98,7 @@ GO
 -- Keeping zero table GRANTs guarantees HAS_PERMS_BY_NAME('dbo.TowRequests', 'OBJECT', 'SELECT') = 0
 -- AND guarantees 100% clean ownership chaining inside dbo.usp_* stored procedures.
 
--- 7. Grant EXECUTE ONLY on the 34 Authorized Stored Procedures
+-- 7. Grant EXECUTE ONLY on the 38 Authorized Stored Procedures
 GRANT EXECUTE ON OBJECT::dbo.usp_ClearDispatcherSessionContext TO [db_tow_dispatcher_role];
 GRANT EXECUTE ON OBJECT::dbo.usp_GetSystemUserForAuth          TO [db_tow_dispatcher_role];
 GRANT EXECUTE ON OBJECT::dbo.usp_SetDispatcherSessionContext   TO [db_tow_dispatcher_role];
@@ -104,6 +106,9 @@ GRANT EXECUTE ON OBJECT::dbo.usp_GetDashboardSnapshot          TO [db_tow_dispat
 GRANT EXECUTE ON OBJECT::dbo.usp_CheckPolicyAndPreviewTariff   TO [db_tow_dispatcher_role];
 GRANT EXECUTE ON OBJECT::dbo.usp_CreateCustomer                TO [db_tow_dispatcher_role];
 GRANT EXECUTE ON OBJECT::dbo.usp_UpdateCustomer                TO [db_tow_dispatcher_role];
+GRANT EXECUTE ON OBJECT::dbo.usp_CreateCustomerVehicle         TO [db_tow_dispatcher_role];
+GRANT EXECUTE ON OBJECT::dbo.usp_CreateInsuranceProvider       TO [db_tow_dispatcher_role];
+GRANT EXECUTE ON OBJECT::dbo.usp_UpdateInsuranceProvider       TO [db_tow_dispatcher_role];
 GRANT EXECUTE ON OBJECT::dbo.usp_CreatePolicyWithTiers         TO [db_tow_dispatcher_role];
 GRANT EXECUTE ON OBJECT::dbo.usp_UpsertQuotaTier               TO [db_tow_dispatcher_role];
 GRANT EXECUTE ON OBJECT::dbo.usp_AddPlateCode                  TO [db_tow_dispatcher_role];

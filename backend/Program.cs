@@ -17,8 +17,16 @@ builder.WebHost.ConfigureKestrel(options =>
 // 1. Load .env file if present so no database password is ever hardcoded in C# source code
 LoadDotEnv(Path.Combine(builder.Environment.ContentRootPath, ".env"));
 
-string connectionString = Environment.GetEnvironmentVariable("TOW_DB_CONNECTION_STRING")
-    ?? "Server=localhost;Database=GIN401_TowDispatch;Integrated Security=True;Pooling=False;TrustServerCertificate=True;";
+string? configuredConnStr = Environment.GetEnvironmentVariable("TOW_DB_CONNECTION_STRING");
+if (string.IsNullOrWhiteSpace(configuredConnStr) ||
+    configuredConnStr.Contains("Integrated Security=True", StringComparison.OrdinalIgnoreCase) ||
+    configuredConnStr.Contains("Integrated Security=SSPI", StringComparison.OrdinalIgnoreCase) ||
+    configuredConnStr.Contains("Trusted_Connection=True", StringComparison.OrdinalIgnoreCase))
+{
+    throw new InvalidOperationException("Configuration Error: TOW_DB_CONNECTION_STRING must be set in backend/.env using the dedicated least-privilege SQL login (tow_cad_app_login). Windows Integrated Authentication fallback is disabled.");
+}
+
+string connectionString = configuredConnStr;
 
 builder.Services.AddCors(options =>
 {
@@ -119,6 +127,10 @@ void PruneExpiredRevocations()
 
 IResult MapSqlExceptionResult(SqlException ex)
 {
+    if (ex.Number is 18456 or 4060)
+    {
+        return Results.Json(new { success = false, sqlErrorNumber = ex.Number, error = "Database authentication failed for the configured least-privilege SQL login. Verify TOW_DB_CONNECTION_STRING in backend/.env and SQL Server Mixed Mode configuration." }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
     if (ex.Number is 50030 or 50031)
     {
         return Results.Json(new { success = false, error = "Operator session is invalid or inactive. Please sign in again." }, statusCode: StatusCodes.Status401Unauthorized);
@@ -206,67 +218,21 @@ app.Use(async (context, next) =>
 });
 app.UseRateLimiter();
 
-int useIntegratedFallbackFlag = 0;
-bool configuredUsesIntegrated =
-    connectionString.Contains("Integrated Security=True", StringComparison.OrdinalIgnoreCase) ||
-    connectionString.Contains("Integrated Security=SSPI", StringComparison.OrdinalIgnoreCase) ||
-    connectionString.Contains("Trusted_Connection=True", StringComparison.OrdinalIgnoreCase);
-
 var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
 httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("TrackerConnectCAD/2.0");
-
-async Task EnforceLeastPrivilegeOnIntegratedConnectionAsync(SqlConnection winConn)
-{
-    const string sql = @"
-        IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'tow_cad_app_login')
-           AND SUSER_SNAME() <> N'tow_cad_app_login'
-        BEGIN
-            EXECUTE AS LOGIN = N'tow_cad_app_login';
-        END;
-        SELECT IS_SRVROLEMEMBER('sysadmin'), IS_ROLEMEMBER('db_tow_dispatcher_role');";
-
-    await using var impCmd = new SqlCommand(sql, winConn);
-    await using var r = await impCmd.ExecuteReaderAsync();
-    if (!await r.ReadAsync() || r.GetInt32(0) == 1 || r.GetInt32(1) != 1)
-    {
-        throw new InvalidOperationException("Least-privilege SQL role verification failed: refusing to execute under sysadmin or non-dispatcher principal.");
-    }
-}
 
 // Opens a raw least-privilege SQL connection as [tow_cad_app_login] -> [tow_cad_app_user] in [db_tow_dispatcher_role]
 async Task<SqlConnection> OpenRawLeastPrivilegeConnectionAsync()
 {
-    if (!configuredUsesIntegrated && Volatile.Read(ref useIntegratedFallbackFlag) == 0)
-    {
-        var conn = new SqlConnection(connectionString);
-        try
-        {
-            await conn.OpenAsync();
-            return conn;
-        }
-        catch (SqlException ex) when (ex.Number == 18456)
-        {
-            await conn.DisposeAsync();
-            Interlocked.Exchange(ref useIntegratedFallbackFlag, 1);
-            app.Logger.LogWarning("SQL login authentication failed (18456); switching to Integrated Security + mandatory EXECUTE AS LOGIN = 'tow_cad_app_login'.");
-        }
-        catch
-        {
-            await conn.DisposeAsync();
-            throw;
-        }
-    }
-
-    var winConn = new SqlConnection("Server=localhost;Database=GIN401_TowDispatch;Integrated Security=True;Pooling=False;TrustServerCertificate=True;");
+    var conn = new SqlConnection(connectionString);
     try
     {
-        await winConn.OpenAsync();
-        await EnforceLeastPrivilegeOnIntegratedConnectionAsync(winConn);
-        return winConn;
+        await conn.OpenAsync();
+        return conn;
     }
     catch
     {
-        await winConn.DisposeAsync();
+        await conn.DisposeAsync();
         throw;
     }
 }
@@ -687,7 +653,10 @@ app.MapGet("/api/dashboard", async (HttpContext httpContext) =>
             providerId = reader.GetInt32(0),
             providerName = reader.GetString(1),
             supportPhone = reader.GetString(2),
-            contractEmail = reader.IsDBNull(3) ? "" : reader.GetString(3)
+            contractEmail = reader.IsDBNull(3) ? "" : reader.GetString(3),
+            isActive = reader.GetBoolean(4),
+            createdAt = reader.GetString(5),
+            policyCount = reader.GetInt32(6)
         });
     }
 
@@ -1489,6 +1458,127 @@ app.MapPost("/api/policies", async (HttpContext httpContext, CreatePolicyDto dto
             customerId = finalCustomerId,
             policyNumber = dto.PolicyNumber,
             message = $"Policy '{dto.PolicyNumber}' created and linked to Customer ID #{finalCustomerId}."
+        });
+    }
+    catch (SqlException ex)
+    {
+        return MapSqlExceptionResult(ex);
+    }
+});
+
+app.MapPost("/api/providers", async (HttpContext httpContext, CreateProviderDto dto) =>
+{
+    try
+    {
+        await using var conn = await OpenAuthenticatedConnectionAsync(httpContext);
+        await using var cmd = new SqlCommand("dbo.usp_CreateInsuranceProvider", conn)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
+        cmd.Parameters.Add("@ProviderName", SqlDbType.NVarChar, 100).Value = dto.ProviderName;
+        cmd.Parameters.Add("@SupportPhone", SqlDbType.VarChar, 30).Value = dto.SupportPhone;
+        cmd.Parameters.Add("@ContractEmail", SqlDbType.VarChar, 120).Value = (object?)dto.ContractEmail ?? DBNull.Value;
+        cmd.Parameters.Add("@IsActive", SqlDbType.Bit).Value = dto.IsActive;
+
+        int newProviderId = 0;
+        string providerName = dto.ProviderName;
+        await using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            if (await reader.ReadAsync())
+            {
+                newProviderId = reader.GetInt32(0);
+                providerName = reader.GetString(1);
+            }
+        }
+
+        return Results.Ok(new
+        {
+            success = true,
+            providerId = newProviderId,
+            providerName,
+            message = $"Insurance provider '{providerName}' created."
+        });
+    }
+    catch (SqlException ex)
+    {
+        return MapSqlExceptionResult(ex);
+    }
+});
+
+app.MapPut("/api/providers/{providerId:int}", async (HttpContext httpContext, int providerId, UpdateProviderDto dto) =>
+{
+    try
+    {
+        await using var conn = await OpenAuthenticatedConnectionAsync(httpContext);
+        await using var cmd = new SqlCommand("dbo.usp_UpdateInsuranceProvider", conn)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
+        cmd.Parameters.Add("@ProviderId", SqlDbType.Int).Value = providerId;
+        cmd.Parameters.Add("@ProviderName", SqlDbType.NVarChar, 100).Value = dto.ProviderName;
+        cmd.Parameters.Add("@SupportPhone", SqlDbType.VarChar, 30).Value = dto.SupportPhone;
+        cmd.Parameters.Add("@ContractEmail", SqlDbType.VarChar, 120).Value = (object?)dto.ContractEmail ?? DBNull.Value;
+        cmd.Parameters.Add("@IsActive", SqlDbType.Bit).Value = dto.IsActive;
+
+        string providerName = dto.ProviderName;
+        await using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            if (await reader.ReadAsync())
+            {
+                providerName = reader.GetString(1);
+            }
+        }
+
+        return Results.Ok(new
+        {
+            success = true,
+            providerId,
+            providerName,
+            message = $"Insurance provider '{providerName}' updated."
+        });
+    }
+    catch (SqlException ex)
+    {
+        return MapSqlExceptionResult(ex);
+    }
+});
+
+app.MapPost("/api/customers/{customerId:int}/vehicles", async (HttpContext httpContext, int customerId, CreateCustomerVehicleDto dto) =>
+{
+    try
+    {
+        await using var conn = await OpenAuthenticatedConnectionAsync(httpContext);
+        await using var cmd = new SqlCommand("dbo.usp_CreateCustomerVehicle", conn)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
+        cmd.Parameters.Add("@CustomerId", SqlDbType.Int).Value = customerId;
+        cmd.Parameters.Add("@VehicleModel", SqlDbType.NVarChar, 80).Value = dto.VehicleModel;
+        cmd.Parameters.Add("@NoPlate", SqlDbType.Bit).Value = dto.NoPlate;
+        cmd.Parameters.Add("@PlateCodeId", SqlDbType.Int).Value = (object?)dto.PlateCodeId ?? DBNull.Value;
+        cmd.Parameters.Add("@PlateDigits", SqlDbType.VarChar, 20).Value = (object?)dto.PlateDigits ?? DBNull.Value;
+
+        int newVehicleId = 0;
+        string vehiclePlate = "";
+        string vehicleModel = dto.VehicleModel;
+        await using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            if (await reader.ReadAsync())
+            {
+                newVehicleId = reader.GetInt32(0);
+                vehiclePlate = reader.GetString(2);
+                vehicleModel = reader.GetString(3);
+            }
+        }
+
+        return Results.Ok(new
+        {
+            success = true,
+            vehicleId = newVehicleId,
+            customerId,
+            vehiclePlate,
+            vehicleModel,
+            message = $"Vehicle '{vehicleModel}' ({vehiclePlate}) registered for customer."
         });
     }
     catch (SqlException ex)
@@ -2832,3 +2922,6 @@ public record AdminUpdateUserDto(
     bool IsActive = true,
     string? NewPassword = null
 );
+public record CreateProviderDto(string ProviderName, string SupportPhone, string? ContractEmail = null, bool IsActive = true);
+public record UpdateProviderDto(string ProviderName, string SupportPhone, string? ContractEmail = null, bool IsActive = true);
+public record CreateCustomerVehicleDto(string VehicleModel, bool NoPlate = false, int? PlateCodeId = null, string? PlateDigits = null);

@@ -129,6 +129,26 @@ export default function App() {
   const [policyViewMode, setPolicyViewMode] = useState('list'); // 'list' | 'form' | 'new'
   const [policyNotebookTab, setPolicyNotebookTab] = useState('tiers'); // 'tiers' | 'history'
 
+  // Insurance Providers & Quick-Add Provider Modal & Customer Add-Vehicle Form State
+  const [providerSearch, setProviderSearch] = useState('');
+  const [providerViewMode, setProviderViewMode] = useState('list'); // 'list' | 'form' | 'new'
+  const [selectedProviderId, setSelectedProviderId] = useState(1);
+  const [editingProviderForm, setEditingProviderForm] = useState(null);
+  const [newProviderForm, setNewProviderForm] = useState({
+    providerName: '',
+    supportPhone: '+961-01-',
+    contractEmail: '',
+    isActive: true
+  });
+  const [showQuickProviderModal, setShowQuickProviderModal] = useState(false);
+  const [showAddVehicleForm, setShowAddVehicleForm] = useState(false);
+  const [newVehicleForm, setNewVehicleForm] = useState({
+    vehicleModel: '',
+    noPlate: false,
+    plateCodeId: 2,
+    plateDigits: ''
+  });
+
   // Configuration -> Tow Trucks Master-Detail State
   const [truckViewMode, setTruckViewMode] = useState('list'); // 'list' | 'form' | 'new'
   const [selectedTruckForm, setSelectedTruckForm] = useState(null);
@@ -231,6 +251,7 @@ export default function App() {
     drivers: 'Drivers',
     customers: 'Customers',
     policies: 'Policies & Quotas',
+    providers: 'Insurance Providers',
     tariffs: 'Tariffs',
     billing: 'Invoices & Payments',
     queue: 'Dispatch Queue',
@@ -270,6 +291,7 @@ export default function App() {
     const closeTopDialog = event => {
       if (event.key !== 'Escape') return;
       if (showPlateModal) setShowPlateModal(false);
+      else if (showQuickProviderModal) setShowQuickProviderModal(false);
       else if (paymentModalInvoice) setPaymentModalInvoice(null);
       else if (locationPicker.open) setLocationPicker(prev => ({ ...prev, open: false }));
       else if (policyWarningModal) setPolicyWarningModal(null);
@@ -283,7 +305,7 @@ export default function App() {
     };
     document.addEventListener('keydown', closeTopDialog);
     return () => document.removeEventListener('keydown', closeTopDialog);
-  }, [showPlateModal, paymentModalInvoice, locationPicker.open, policyWarningModal, changeLogOpen]);
+  }, [showPlateModal, showQuickProviderModal, paymentModalInvoice, locationPicker.open, policyWarningModal, changeLogOpen]);
 
   useEffect(() => {
     const handleOutsidePointer = event => {
@@ -1309,6 +1331,88 @@ export default function App() {
     }
   };
 
+  // Insurance Providers Handlers
+  const handleCreateProvider = async (e, fromQuickModal = false) => {
+    if (e) e.preventDefault();
+    try {
+      const res = await apiFetch(`${API_BASE}/providers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProviderForm)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to add insurance provider');
+      showToast('success', 'Insurance Provider Added', data.message);
+      await fetchDashboard();
+      const createdId = data.providerId;
+      const createdProv = {
+        providerId: createdId,
+        providerName: newProviderForm.providerName,
+        supportPhone: newProviderForm.supportPhone,
+        contractEmail: newProviderForm.contractEmail || '',
+        isActive: Boolean(newProviderForm.isActive)
+      };
+      setNewProviderForm({ providerName: '', supportPhone: '+961-01-', contractEmail: '', isActive: true });
+      if (fromQuickModal) {
+        setShowQuickProviderModal(false);
+        setNewPolicyForm(prev => ({ ...prev, providerId: createdId }));
+      } else {
+        if (createdId) {
+          setSelectedProviderId(createdId);
+          setEditingProviderForm(createdProv);
+          setProviderViewMode('form');
+        }
+      }
+    } catch (err) {
+      showToast('error', 'Provider Creation Failed', err.message);
+    }
+  };
+
+  const handleUpdateProvider = async e => {
+    if (e) e.preventDefault();
+    if (!editingProviderForm?.providerId) return;
+    try {
+      const res = await apiFetch(`${API_BASE}/providers/${editingProviderForm.providerId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingProviderForm)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update insurance provider');
+      showToast('success', 'Provider Updated', data.message);
+      await fetchDashboard();
+      fetchRecordInlineLogs('InsuranceProviders', editingProviderForm.providerId);
+    } catch (err) {
+      showToast('error', 'Provider Update Failed', err.message);
+    }
+  };
+
+  // Register Customer Vehicle (Multiple Vehicles per Customer)
+  const handleCreateCustomerVehicle = async e => {
+    if (e) e.preventDefault();
+    if (!selectedCustomerId) return;
+    try {
+      const res = await apiFetch(`${API_BASE}/customers/${selectedCustomerId}/vehicles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vehicleModel: newVehicleForm.vehicleModel,
+          noPlate: Boolean(newVehicleForm.noPlate),
+          plateCodeId: newVehicleForm.noPlate ? null : Number(newVehicleForm.plateCodeId),
+          plateDigits: newVehicleForm.noPlate ? null : newVehicleForm.plateDigits
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to register vehicle');
+      showToast('success', 'Vehicle Registered', data.message);
+      await fetchDashboard();
+      setNewVehicleForm({ vehicleModel: '', noPlate: false, plateCodeId: 2, plateDigits: '' });
+      setShowAddVehicleForm(false);
+    } catch (err) {
+      showToast('error', 'Vehicle Registration Failed', err.message);
+    }
+  };
+
   // Approve & Dispatch to Truck
   const handleDispatchTruck = async towRequestId => {
     const truckId =
@@ -1631,6 +1735,9 @@ export default function App() {
     if (activeTab === 'policies' && policyViewMode === 'form' && selectedPolicyId) {
       return { entityType: 'InsurancePolicies', entityId: Number(selectedPolicyId), label: `Policy #${selectedPolicyId}` };
     }
+    if (activeTab === 'providers' && providerViewMode === 'form' && selectedProviderId) {
+      return { entityType: 'InsuranceProviders', entityId: Number(selectedProviderId), label: `Provider #${selectedProviderId}` };
+    }
     if (activeTab === 'tariffs' && tariffViewMode === 'form' && selectedTariffId) {
       return { entityType: 'Tariffs', entityId: Number(selectedTariffId), label: `Tariff #${selectedTariffId}` };
     }
@@ -1640,9 +1747,14 @@ export default function App() {
     return null;
   };
 
-  const fetchRecordInlineLogs = async targetOverride => {
-    const target = targetOverride || getActiveInlineRecordTarget();
-    if (!currentUser || !target) return;
+  const fetchRecordInlineLogs = async (targetOverride, maybeEntityId) => {
+    let target = targetOverride;
+    if (typeof targetOverride === 'string') {
+      target = { entityType: targetOverride, entityId: maybeEntityId };
+    } else if (!target) {
+      target = getActiveInlineRecordTarget();
+    }
+    if (!currentUser || !target || !target.entityId) return;
     setRecordInlineLogsLoading(true);
     try {
       const params = new URLSearchParams({
@@ -1711,6 +1823,32 @@ export default function App() {
     setPolicyNotebookTab('tiers');
     setPolicyViewMode('form');
     setActiveTab('policies');
+  };
+
+  const openProviderRecord = provId => {
+    const numId = Number(provId);
+    const prov = (dashboard?.providers || []).find(p => p.providerId === numId);
+    setSelectedProviderId(numId);
+    if (prov) {
+      setEditingProviderForm({
+        providerId: prov.providerId,
+        providerName: prov.providerName,
+        supportPhone: prov.supportPhone,
+        contractEmail: prov.contractEmail || '',
+        isActive: prov.isActive !== false
+      });
+    } else {
+      setEditingProviderForm({
+        providerId: numId,
+        providerName: `Provider #${numId}`,
+        supportPhone: '',
+        contractEmail: '',
+        isActive: true
+      });
+    }
+    setProviderViewMode('form');
+    setActiveTab('providers');
+    fetchRecordInlineLogs('InsuranceProviders', numId);
   };
 
   const openTariffRecord = tariffId => {
@@ -2623,7 +2761,7 @@ export default function App() {
             <div className="o-nav-dropdown-wrap">
               <button type="button"
                 className={
-                  activeTab === 'customers' || activeTab === 'policies'
+                  activeTab === 'customers' || activeTab === 'policies' || activeTab === 'providers'
                     ? 'o-nav-link active'
                     : 'o-nav-link'
                 }
@@ -2664,6 +2802,19 @@ export default function App() {
                   >
                     <span>Insurance Policies</span>
                     <span className="dropdown-count-pill">{dashboard?.policies?.length || 0}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={activeTab === 'providers' ? 'o-dropdown-item active' : 'o-dropdown-item'}
+                    onClick={() => {
+                      setActiveTab('providers');
+                      setMobileNavOpen(false);
+                      setProviderViewMode('list');
+                      setCustPolDropdownOpen(false);
+                    }}
+                  >
+                    <span>Insurance Providers</span>
+                    <span className="dropdown-count-pill">{(dashboard?.providers || []).length}</span>
                   </button>
                 </div>
               )}
@@ -2875,6 +3026,7 @@ export default function App() {
                 {activeTab === 'intake' && 'New Call Intake & Tow Request'}
                 {activeTab === 'customers' && 'Customers Directory'}
                 {activeTab === 'policies' && 'Insurance Policies & Quotas'}
+                {activeTab === 'providers' && 'Insurance Providers'}
                 {activeTab === 'users' && 'Configuration / Users'}
                 {activeTab === 'groups' && 'Configuration / User Groups & Permissions'}
                 {activeTab === 'trucks' && 'Configuration / Tow Trucks'}
@@ -2984,7 +3136,7 @@ export default function App() {
             )}
 
             {/* Sub-Menu Switcher & + New Action Buttons for Customers & Policies */}
-            {(activeTab === 'customers' || activeTab === 'policies') && (
+            {(activeTab === 'customers' || activeTab === 'policies' || activeTab === 'providers') && (
               <div className="action-btn-group">
                 <button
                   type="button"
@@ -3006,6 +3158,16 @@ export default function App() {
                 >
                   Insurance Policies
                 </button>
+                <button
+                  type="button"
+                  className={activeTab === 'providers' ? 'btn-erp-primary' : 'btn-erp-secondary'}
+                  onClick={() => {
+                    setActiveTab('providers');
+                    setProviderViewMode('list');
+                  }}
+                >
+                  Insurance Providers
+                </button>
                 {activeTab === 'customers' && (
                   <button
                     type="button"
@@ -3022,6 +3184,15 @@ export default function App() {
                     onClick={() => setPolicyViewMode('new')}
                   >
                     + New Policy
+                  </button>
+                )}
+                {activeTab === 'providers' && (
+                  <button
+                    type="button"
+                    className="btn-erp-primary"
+                    onClick={() => setProviderViewMode('new')}
+                  >
+                    + New Provider
                   </button>
                 )}
               </div>
@@ -3065,6 +3236,7 @@ export default function App() {
             {activeTab !== 'intake' &&
               activeTab !== 'customers' &&
               activeTab !== 'policies' &&
+              activeTab !== 'providers' &&
               activeTab !== 'users' &&
               activeTab !== 'groups' &&
               activeTab !== 'trucks' &&
@@ -3101,6 +3273,17 @@ export default function App() {
                 onChange={e => {
                   setPolicySearch(e.target.value);
                   if (policyViewMode !== 'list') setPolicyViewMode('list');
+                }}
+              />
+            ) : activeTab === 'providers' ? (
+              <input
+                type="text"
+                className="o-cp-search-input"
+                placeholder="Search providers by name, phone, or email..."
+                value={providerSearch}
+                onChange={e => {
+                  setProviderSearch(e.target.value);
+                  if (providerViewMode !== 'list') setProviderViewMode('list');
                 }}
               />
             ) : activeTab === 'users' ||
@@ -3460,6 +3643,61 @@ export default function App() {
                   type="button"
                   className="btn-secondary"
                   onClick={() => setShowPlateModal(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Add Insurance Provider Modal */}
+      {showQuickProviderModal && (
+        <div className="modal-backdrop">
+          <div className="modal-box" role="dialog" aria-modal="true" aria-labelledby="quick-provider-modal-title">
+            <h3 id="quick-provider-modal-title">Add Insurance Provider</h3>
+            <p className="muted">
+              Register a contracted insurance carrier to link customer policies and dispatch coverage quotas.
+            </p>
+            <form onSubmit={e => handleCreateProvider(e, true)} className="intake-form">
+              <div className="form-row">
+                <label>Provider Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Bankers Assurance SAL"
+                  value={newProviderForm.providerName}
+                  onChange={e => setNewProviderForm({ ...newProviderForm, providerName: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="form-row">
+                <label>24/7 Support Phone *</label>
+                <input
+                  type="text"
+                  placeholder="+961-01-xxxxxx"
+                  value={newProviderForm.supportPhone}
+                  onChange={e => setNewProviderForm({ ...newProviderForm, supportPhone: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="form-row">
+                <label>Contract / Claims Email</label>
+                <input
+                  type="email"
+                  placeholder="claims@bankers.com.lb"
+                  value={newProviderForm.contractEmail}
+                  onChange={e => setNewProviderForm({ ...newProviderForm, contractEmail: e.target.value })}
+                />
+              </div>
+              <div className="modal-actions">
+                <button type="submit" className="btn-primary">
+                  Create &amp; Select Provider
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setShowQuickProviderModal(false)}
                 >
                   Cancel
                 </button>
@@ -4901,87 +5139,226 @@ export default function App() {
                     </div>
                     <div className="erp-notebook-page">
                       {customerNotebookTab === 'policies' && (
-                        <div className="table-scroll">
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Policy Number</th>
-                                <th>Insurance Provider</th>
-                                <th>Start Date</th>
-                                <th>Expiration Date</th>
-                                <th>Covered Distance (KM)</th>
-                                <th>Status</th>
-                                <th>Action</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {customerPolicies.map(p => (
-                                <tr
-                                  key={p.policyId}
-                                  className="clickable-row"
-                                  onClick={() => openPolicyRecord(p.policyId)}
-                                >
-                                  <td>
-                                    <strong>{p.policyNumber}</strong>
-                                  </td>
-                                  <td>{p.providerName}</td>
-                                  <td>{p.startDate}</td>
-                                  <td>{p.expirationDate}</td>
-                                  <td>{p.defaultAllowedKm} KM</td>
-                                  <td>
-                                    <span className="badge badge-Done">{p.policyStatus}</span>
-                                  </td>
-                                  <td onClick={e => e.stopPropagation()}>
-                                    <button
-                                      type="button"
-                                      className="btn-xs"
-                                      onClick={() => openPolicyRecord(p.policyId)}
-                                    >
-                                      Open Policy &amp; Quotas
-                                    </button>
-                                  </td>
+                        <>
+                          <div className="card-header-flex" style={{ marginBottom: '10px' }}>
+                            <p className="muted" style={{ margin: 0 }}>
+                              A customer can hold multiple insurance policies across different providers.
+                            </p>
+                            <button
+                              type="button"
+                              className="btn-erp-primary"
+                              onClick={() => {
+                                setNewPolicyForm(prev => ({ ...prev, customerId: selectedCustomerObj.customerId }));
+                                setActiveTab('policies');
+                                setPolicyViewMode('new');
+                              }}
+                            >
+                              + New Policy for Customer
+                            </button>
+                          </div>
+                          <div className="table-scroll">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Policy Number</th>
+                                  <th>Insurance Provider</th>
+                                  <th>Start Date</th>
+                                  <th>Expiration Date</th>
+                                  <th>Covered Distance (KM)</th>
+                                  <th>Status</th>
+                                  <th>Action</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {customerNotebookTab === 'vehicles' && (
-                        <div className="table-scroll">
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Vehicle ID</th>
-                                <th>License Plate</th>
-                                <th>Vehicle Model</th>
-                                <th>Plate Registration Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(dashboard?.vehicles || [])
-                                .filter(v => v.customerId === selectedCustomerObj.customerId)
-                                .map(v => (
-                                  <tr key={v.vehicleId}>
-                                    <td>#{v.vehicleId}</td>
+                              </thead>
+                              <tbody>
+                                {customerPolicies.map(p => (
+                                  <tr
+                                    key={p.policyId}
+                                    className="clickable-row"
+                                    onClick={() => openPolicyRecord(p.policyId)}
+                                  >
                                     <td>
-                                      <code>{v.vehiclePlate}</code>
+                                      <strong>{p.policyNumber}</strong>
                                     </td>
-                                    <td>
-                                      <strong>{v.vehicleModel}</strong>
+                                    <td onClick={e => e.stopPropagation()}>
+                                      <button
+                                        type="button"
+                                        className="rel-entity-link"
+                                        onClick={() => openProviderRecord(p.providerId)}
+                                      >
+                                        {p.providerName} →
+                                      </button>
                                     </td>
+                                    <td>{p.startDate}</td>
+                                    <td>{p.expirationDate}</td>
+                                    <td>{p.defaultAllowedKm} KM</td>
                                     <td>
-                                      {v.noPlate ? (
-                                        <span className="badge badge-PendingInsurance">Unregistered / Showroom Vehicle</span>
-                                      ) : (
-                                        <span className="badge badge-Done">Registered Plate</span>
-                                      )}
+                                      <span className="badge badge-Done">{p.policyStatus}</span>
+                                    </td>
+                                    <td onClick={e => e.stopPropagation()}>
+                                      <button
+                                        type="button"
+                                        className="btn-xs"
+                                        onClick={() => openPolicyRecord(p.policyId)}
+                                      >
+                                        Open Policy &amp; Quotas
+                                      </button>
                                     </td>
                                   </tr>
                                 ))}
-                            </tbody>
-                          </table>
-                        </div>
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
+
+                      {customerNotebookTab === 'vehicles' && (
+                        <>
+                          <div className="card-header-flex" style={{ marginBottom: '10px' }}>
+                            <p className="muted" style={{ margin: 0 }}>
+                              Register all vehicles owned by this customer.
+                            </p>
+                            <button
+                              type="button"
+                              className="btn-erp-primary"
+                              onClick={() => setShowAddVehicleForm(prev => !prev)}
+                            >
+                              {showAddVehicleForm ? 'Cancel Add Vehicle' : '+ Add Vehicle (Car)'}
+                            </button>
+                          </div>
+
+                          {showAddVehicleForm && (
+                            <form
+                              onSubmit={handleCreateCustomerVehicle}
+                              className="optimistic-box"
+                              style={{ marginBottom: '16px', padding: '16px' }}
+                            >
+                              <h4 style={{ margin: '0 0 12px 0' }}>Register Vehicle for Customer</h4>
+                              <div
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                                  gap: '12px',
+                                  marginBottom: '12px'
+                                }}
+                              >
+                                <div className="form-row">
+                                  <label>Car Make &amp; Model *</label>
+                                  <input
+                                    type="text"
+                                    placeholder="e.g. Kia Sportage 2024"
+                                    value={newVehicleForm.vehicleModel}
+                                    onChange={e =>
+                                      setNewVehicleForm({ ...newVehicleForm, vehicleModel: e.target.value })
+                                    }
+                                    required
+                                  />
+                                </div>
+                                <div className="form-row">
+                                  <label>Plate Registration</label>
+                                  <label
+                                    className="erp-toggle-switch"
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '8px',
+                                      marginTop: '8px',
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={newVehicleForm.noPlate}
+                                      onChange={e =>
+                                        setNewVehicleForm({ ...newVehicleForm, noPlate: e.target.checked })
+                                      }
+                                    />
+                                    <span>Unregistered / Showroom Vehicle (No Plate)</span>
+                                  </label>
+                                </div>
+                                {!newVehicleForm.noPlate && (
+                                  <div className="form-row" style={{ gridColumn: '1 / -1' }}>
+                                    <label>License Plate Prefix &amp; Digits *</label>
+                                    <div className="erp-plate-flex">
+                                      <select
+                                        className="plate-code-select"
+                                        value={newVehicleForm.plateCodeId}
+                                        onChange={e =>
+                                          setNewVehicleForm({
+                                            ...newVehicleForm,
+                                            plateCodeId: Number(e.target.value)
+                                          })
+                                        }
+                                        required={!newVehicleForm.noPlate}
+                                      >
+                                        {(dashboard?.plateCodes || []).map(pc => (
+                                          <option key={pc.plateCodeId} value={pc.plateCodeId}>
+                                            {pc.codeLetter || pc.code} ({pc.regionOrCategory || pc.regionDescription})
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="text"
+                                        placeholder="e.g. 458920"
+                                        value={newVehicleForm.plateDigits}
+                                        onChange={e =>
+                                          setNewVehicleForm({ ...newVehicleForm, plateDigits: e.target.value })
+                                        }
+                                        required={!newVehicleForm.noPlate}
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="modal-actions" style={{ justifyContent: 'flex-start', gap: '8px' }}>
+                                <button type="submit" className="btn-erp-primary">
+                                  Save Vehicle
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-erp-secondary"
+                                  onClick={() => setShowAddVehicleForm(false)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          )}
+
+                          <div className="table-scroll">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Vehicle ID</th>
+                                  <th>License Plate</th>
+                                  <th>Vehicle Model</th>
+                                  <th>Plate Registration Status</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(dashboard?.vehicles || [])
+                                  .filter(v => v.customerId === selectedCustomerObj.customerId)
+                                  .map(v => (
+                                    <tr key={v.vehicleId}>
+                                      <td>#{v.vehicleId}</td>
+                                      <td>
+                                        <code>{v.vehiclePlate}</code>
+                                      </td>
+                                      <td>
+                                        <strong>{v.vehicleModel}</strong>
+                                      </td>
+                                      <td>
+                                        {v.noPlate ? (
+                                          <span className="badge badge-PendingInsurance">Unregistered / Showroom Vehicle</span>
+                                        ) : (
+                                          <span className="badge badge-Done">Registered Plate</span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
                       )}
 
                       {customerNotebookTab === 'tows' && (
@@ -5337,7 +5714,13 @@ export default function App() {
                             <div className="erp-field-row">
                               <label>Insurance Provider</label>
                               <div className="erp-field-val">
-                                <span>{selectedPolicyObj.providerName}</span>
+                                <button
+                                  type="button"
+                                  className="rel-entity-link"
+                                  onClick={() => openProviderRecord(selectedPolicyObj.providerId)}
+                                >
+                                  {selectedPolicyObj.providerName} →
+                                </button>
                               </div>
                             </div>
                             <div className="erp-field-row">
@@ -5734,21 +6117,36 @@ export default function App() {
                       <div className="erp-field-row">
                         <label>Insurance Provider</label>
                         <div className="erp-field-val">
-                          <select
-                            value={newPolicyForm.providerId}
-                            onChange={e =>
-                              setNewPolicyForm({
-                                ...newPolicyForm,
-                                providerId: Number(e.target.value)
-                              })
-                            }
-                          >
-                            {(dashboard?.providers || []).map(prov => (
-                              <option key={prov.providerId} value={prov.providerId}>
-                                {prov.providerName} ({prov.supportPhone})
-                              </option>
-                            ))}
-                          </select>
+                          <div className="split-inputs">
+                            <select
+                              value={newPolicyForm.providerId}
+                              onChange={e =>
+                                setNewPolicyForm({
+                                  ...newPolicyForm,
+                                  providerId: Number(e.target.value)
+                                })
+                              }
+                            >
+                              {(dashboard?.providers || [])
+                                .filter(
+                                  p =>
+                                    p.isActive !== false ||
+                                    Number(p.providerId) === Number(newPolicyForm.providerId)
+                                )
+                                .map(prov => (
+                                  <option key={prov.providerId} value={prov.providerId}>
+                                    {prov.providerName} ({prov.supportPhone})
+                                  </option>
+                                ))}
+                            </select>
+                            <button
+                              type="button"
+                              className="btn-erp-secondary"
+                              onClick={() => setShowQuickProviderModal(true)}
+                            >
+                              + Add Provider
+                            </button>
+                          </div>
                         </div>
                       </div>
 
@@ -5892,6 +6290,383 @@ export default function App() {
 
                   <button type="submit" className="btn-erp-primary">
                     Save &amp; Activate Insurance Policy
+                  </button>
+                </form>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ==========================================================================
+            INSURANCE PROVIDERS SECTION (Directory -> Provider Sheet + Linked Policies + Odoo Chatter)
+           ========================================================================== */}
+        {activeTab === 'providers' && (
+          <div className="o-form-sheet">
+            {providerViewMode === 'list' && (
+              <div className="erp-sheet-pad">
+                <div className="card-header-flex" style={{ marginBottom: '12px' }}>
+                  <div>
+                    <h3>Insurance Providers Directory</h3>
+                    <p className="muted">
+                      Each insurance policy references one provider. Click a provider to edit its details or inspect all linked policies.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Provider Name</th>
+                        <th>24/7 Support Hotline</th>
+                        <th>Contract / Claims Email</th>
+                        <th>Linked Policies</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(dashboard?.providers || [])
+                        .filter(p => {
+                          const q = providerSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            (p.providerName || '').toLowerCase().includes(q) ||
+                            (p.supportPhone || '').toLowerCase().includes(q) ||
+                            (p.contractEmail || '').toLowerCase().includes(q)
+                          );
+                        })
+                        .map(prov => {
+                          const linkedCount = (dashboard?.policies || []).filter(
+                            pol => pol.providerId === prov.providerId
+                          ).length;
+                          return (
+                            <tr
+                              key={prov.providerId}
+                              className="clickable-row"
+                              style={{ cursor: 'pointer' }}
+                              onClick={() => openProviderRecord(prov.providerId)}
+                            >
+                              <td>#{prov.providerId}</td>
+                              <td>
+                                <strong>{prov.providerName}</strong>
+                              </td>
+                              <td>{prov.supportPhone}</td>
+                              <td>{prov.contractEmail || '—'}</td>
+                              <td>
+                                <span className="badge badge-InProgress">
+                                  {linkedCount} {linkedCount === 1 ? 'Policy' : 'Policies'}
+                                </span>
+                              </td>
+                              <td>
+                                <span
+                                  className={
+                                    prov.isActive !== false ? 'badge badge-Done' : 'badge badge-Rejected'
+                                  }
+                                >
+                                  {prov.isActive !== false ? 'Active' : 'Inactive'}
+                                </span>
+                              </td>
+                              <td onClick={e => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  className="btn-xs"
+                                  onClick={() => openProviderRecord(prov.providerId)}
+                                >
+                                  Open Provider
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {providerViewMode === 'form' && editingProviderForm && (
+              <>
+                <div className="o-form-statusbar">
+                  <div className="action-btn-group">
+                    <button
+                      type="button"
+                      className="btn-erp-secondary"
+                      onClick={() => setProviderViewMode('list')}
+                    >
+                      ← Back to Providers List
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-erp-secondary"
+                      onClick={() => setProviderViewMode('new')}
+                    >
+                      + New Provider
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-erp-primary"
+                      onClick={() => {
+                        setNewPolicyForm(prev => ({
+                          ...prev,
+                          providerId: editingProviderForm.providerId
+                        }));
+                        setActiveTab('policies');
+                        setPolicyViewMode('new');
+                      }}
+                    >
+                      + Issue Policy with Provider
+                    </button>
+                  </div>
+                  <div className="o-statusbar-status">
+                    <span
+                      className={`o-stage-pill ${
+                        editingProviderForm.isActive !== false ? 'current' : 'archived'
+                      }`}
+                    >
+                      {editingProviderForm.isActive !== false
+                        ? 'Active Provider'
+                        : 'Inactive Provider'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="erp-sheet-pad">
+                  <div className="erp-oe-title">
+                    <span className="erp-oe-label">
+                      Insurance Provider #{editingProviderForm.providerId}
+                    </span>
+                    <h1>{editingProviderForm.providerName || 'Unnamed Provider'}</h1>
+                  </div>
+
+                  <form onSubmit={handleUpdateProvider} className="optimistic-box" style={{ marginBottom: '20px' }}>
+                    <div className="erp-group-grid" style={{ marginBottom: 0 }}>
+                      <div className="erp-group-col">
+                        <div className="form-row">
+                          <label>Provider Name</label>
+                          <input
+                            type="text"
+                            value={editingProviderForm.providerName}
+                            onChange={e =>
+                              setEditingProviderForm({
+                                ...editingProviderForm,
+                                providerName: e.target.value
+                              })
+                            }
+                            required
+                          />
+                        </div>
+                        <div className="form-row" style={{ marginTop: '12px' }}>
+                          <label>24/7 Support Hotline</label>
+                          <input
+                            type="text"
+                            value={editingProviderForm.supportPhone}
+                            onChange={e =>
+                              setEditingProviderForm({
+                                ...editingProviderForm,
+                                supportPhone: e.target.value
+                              })
+                            }
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div className="erp-group-col">
+                        <div className="form-row">
+                          <label>Contract / Claims Email</label>
+                          <input
+                            type="email"
+                            value={editingProviderForm.contractEmail}
+                            onChange={e =>
+                              setEditingProviderForm({
+                                ...editingProviderForm,
+                                contractEmail: e.target.value
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="form-row" style={{ marginTop: '16px' }}>
+                          <label className="erp-toggle-switch" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={editingProviderForm.isActive !== false}
+                              onChange={e =>
+                                setEditingProviderForm({
+                                  ...editingProviderForm,
+                                  isActive: e.target.checked
+                                })
+                              }
+                            />
+                            <span>Provider Active (Available for new policies)</span>
+                          </label>
+                        </div>
+                        <div style={{ marginTop: '20px' }}>
+                          <button type="submit" className="btn-erp-primary">
+                            Save Provider Changes
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </form>
+
+                  <div className="erp-notebook">
+                    <div className="erp-notebook-tabs">
+                      <button type="button" className="erp-nb-tab active">
+                        Linked Insurance Policies (
+                        {(dashboard?.policies || []).filter(
+                          p => p.providerId === editingProviderForm.providerId
+                        ).length}
+                        )
+                      </button>
+                    </div>
+                    <div className="erp-notebook-page">
+                      <div className="table-scroll">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Policy Number</th>
+                              <th>Customer</th>
+                              <th>Start Date</th>
+                              <th>Expiration Date</th>
+                              <th>Covered Distance</th>
+                              <th>Status</th>
+                              <th>Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(() => {
+                              const linked = (dashboard?.policies || []).filter(
+                                p => p.providerId === editingProviderForm.providerId
+                              );
+                              if (linked.length === 0) {
+                                return (
+                                  <tr>
+                                    <td colSpan={7} className="muted" style={{ textAlign: 'center', padding: '16px' }}>
+                                      No insurance policies issued under this provider yet.
+                                    </td>
+                                  </tr>
+                                );
+                              }
+                              return linked.map(p => (
+                                <tr
+                                  key={p.policyId}
+                                  className="clickable-row"
+                                  style={{ cursor: 'pointer' }}
+                                  onClick={() => openPolicyRecord(p.policyId)}
+                                >
+                                  <td>
+                                    <strong>{p.policyNumber}</strong>
+                                  </td>
+                                  <td>
+                                    {p.customerName} <span className="muted">({p.customerPhone})</span>
+                                  </td>
+                                  <td>{p.startDate}</td>
+                                  <td>{p.expirationDate}</td>
+                                  <td>{p.defaultAllowedKm} KM</td>
+                                  <td>
+                                    <span className="badge badge-Done">{p.policyStatus}</span>
+                                  </td>
+                                  <td onClick={e => e.stopPropagation()}>
+                                    <button
+                                      type="button"
+                                      className="btn-xs"
+                                      onClick={() => openPolicyRecord(p.policyId)}
+                                    >
+                                      Open Policy &amp; Quotas
+                                    </button>
+                                  </td>
+                                </tr>
+                              ));
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {renderInlineRecordChatter(editingProviderForm.providerName)}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {providerViewMode === 'new' && (
+              <>
+                <div className="o-form-statusbar">
+                  <button
+                    type="button"
+                    className="btn-erp-secondary"
+                    onClick={() => setProviderViewMode('list')}
+                  >
+                    ← Discard / Back to Providers List
+                  </button>
+                </div>
+
+                <form onSubmit={e => handleCreateProvider(e, false)} className="erp-sheet-pad">
+                  <div className="erp-oe-title">
+                    <span className="erp-oe-label">New Insurance Provider</span>
+                    <h1>Register Insurance Carrier</h1>
+                    <p className="muted">
+                      Configure corporate details, dispatch hotline, and claims processing email.
+                    </p>
+                  </div>
+
+                  <div className="erp-group-grid" style={{ marginBottom: '20px' }}>
+                    <div className="erp-group-col">
+                      <div className="form-row">
+                        <label>Provider Name *</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Bankers Assurance SAL"
+                          value={newProviderForm.providerName}
+                          onChange={e =>
+                            setNewProviderForm({ ...newProviderForm, providerName: e.target.value })
+                          }
+                          required
+                        />
+                      </div>
+                      <div className="form-row" style={{ marginTop: '12px' }}>
+                        <label>24/7 Support Hotline *</label>
+                        <input
+                          type="text"
+                          placeholder="+961-01-xxxxxx"
+                          value={newProviderForm.supportPhone}
+                          onChange={e =>
+                            setNewProviderForm({ ...newProviderForm, supportPhone: e.target.value })
+                          }
+                          required
+                        />
+                      </div>
+                    </div>
+                    <div className="erp-group-col">
+                      <div className="form-row">
+                        <label>Contract / Claims Email</label>
+                        <input
+                          type="email"
+                          placeholder="claims@bankers.com.lb"
+                          value={newProviderForm.contractEmail}
+                          onChange={e =>
+                            setNewProviderForm({ ...newProviderForm, contractEmail: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="form-row" style={{ marginTop: '16px' }}>
+                        <label className="erp-toggle-switch" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={newProviderForm.isActive !== false}
+                            onChange={e =>
+                              setNewProviderForm({ ...newProviderForm, isActive: e.target.checked })
+                            }
+                          />
+                          <span>Provider Active (Available for new policies)</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button type="submit" className="btn-erp-primary">
+                    + Create Insurance Provider
                   </button>
                 </form>
               </>

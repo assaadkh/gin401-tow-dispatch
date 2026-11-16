@@ -2045,6 +2045,147 @@ BEGIN
 END;
 GO
 
+CREATE OR ALTER PROCEDURE dbo.usp_CreateInsuranceProvider
+    @ProviderName   NVARCHAR(100),
+    @SupportPhone   VARCHAR(30),
+    @ContractEmail  VARCHAR(120) = NULL,
+    @IsActive       BIT = 1
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
+    IF @CurrentUserId IS NULL
+        THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManagePolicies') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Policy management permission is required to manage insurance providers.', 1;
+
+    SET @ProviderName = LTRIM(RTRIM(@ProviderName));
+    SET @SupportPhone = LTRIM(RTRIM(@SupportPhone));
+
+    IF LEN(@ProviderName) < 2
+        THROW 50061, 'Provider name must be at least 2 characters.', 1;
+
+    IF LEN(@SupportPhone) < 6
+        THROW 50062, 'Support phone must be at least 6 characters.', 1;
+
+    IF EXISTS (SELECT 1 FROM dbo.InsuranceProviders WHERE ProviderName = @ProviderName)
+        THROW 50063, 'An insurance provider with this name already exists.', 1;
+
+    INSERT INTO dbo.InsuranceProviders (ProviderName, SupportPhone, ContractEmail, IsActive)
+    VALUES (@ProviderName, @SupportPhone, NULLIF(LTRIM(RTRIM(@ContractEmail)), ''), ISNULL(@IsActive, 1));
+
+    SELECT ProviderId, ProviderName, SupportPhone, ISNULL(ContractEmail, '') AS ContractEmail, IsActive
+    FROM dbo.InsuranceProviders
+    WHERE ProviderId = SCOPE_IDENTITY();
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_UpdateInsuranceProvider
+    @ProviderId     INT,
+    @ProviderName   NVARCHAR(100),
+    @SupportPhone   VARCHAR(30),
+    @ContractEmail  VARCHAR(120) = NULL,
+    @IsActive       BIT = 1
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
+    IF @CurrentUserId IS NULL
+        THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManagePolicies') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Policy management permission is required to manage insurance providers.', 1;
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.InsuranceProviders WHERE ProviderId = @ProviderId)
+        THROW 50061, 'Insurance provider not found.', 1;
+
+    SET @ProviderName = LTRIM(RTRIM(@ProviderName));
+    SET @SupportPhone = LTRIM(RTRIM(@SupportPhone));
+
+    IF LEN(@ProviderName) < 2
+        THROW 50061, 'Provider name must be at least 2 characters.', 1;
+
+    IF LEN(@SupportPhone) < 6
+        THROW 50062, 'Support phone must be at least 6 characters.', 1;
+
+    IF EXISTS (SELECT 1 FROM dbo.InsuranceProviders WHERE ProviderName = @ProviderName AND ProviderId <> @ProviderId)
+        THROW 50063, 'An insurance provider with this name already exists.', 1;
+
+    UPDATE dbo.InsuranceProviders
+    SET ProviderName = @ProviderName,
+        SupportPhone = @SupportPhone,
+        ContractEmail = NULLIF(LTRIM(RTRIM(@ContractEmail)), ''),
+        IsActive = ISNULL(@IsActive, 1)
+    WHERE ProviderId = @ProviderId;
+
+    SELECT ProviderId, ProviderName, SupportPhone, ISNULL(ContractEmail, '') AS ContractEmail, IsActive
+    FROM dbo.InsuranceProviders
+    WHERE ProviderId = @ProviderId;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_CreateCustomerVehicle
+    @CustomerId     INT,
+    @VehicleModel   NVARCHAR(80),
+    @NoPlate        BIT = 0,
+    @PlateCodeId    INT = NULL,
+    @PlateDigits    VARCHAR(20) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @CurrentUserId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
+    IF @CurrentUserId IS NULL
+        THROW 50031, 'Security Context Violation: Authenticated dispatcher SESSION_CONTEXT(AppUserId) is required.', 1;
+
+    IF ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManagePolicies') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanDispatch') AS BIT), 0) = 0
+       AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 0
+        THROW 50060, 'Access Denied: Dispatch or Policy permission is required to register customer vehicles.', 1;
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.Customers WHERE CustomerId = @CustomerId)
+        THROW 50064, 'Customer not found.', 1;
+
+    SET @VehicleModel = LTRIM(RTRIM(@VehicleModel));
+    IF @VehicleModel IS NULL OR LEN(@VehicleModel) < 2
+        THROW 50065, 'Vehicle make/model is required.', 1;
+
+    DECLARE @ComputedPlate VARCHAR(30);
+
+    IF ISNULL(@NoPlate, 0) = 1
+    BEGIN
+        SET @PlateCodeId = NULL;
+        SET @PlateDigits = NULL;
+        SET @ComputedPlate = 'UNREGISTERED';
+    END
+    ELSE
+    BEGIN
+        DECLARE @CodeLetter VARCHAR(10);
+        SELECT @CodeLetter = Code FROM dbo.PlateCodes WHERE PlateCodeId = @PlateCodeId;
+        IF @CodeLetter IS NULL
+            THROW 50065, 'Invalid plate code selected.', 1;
+
+        SET @PlateDigits = LTRIM(RTRIM(@PlateDigits));
+        IF @PlateDigits IS NULL OR LEN(@PlateDigits) = 0
+            THROW 50065, 'Plate digits are required for registered vehicles.', 1;
+
+        SET @ComputedPlate = @CodeLetter + ' ' + @PlateDigits;
+
+        IF EXISTS (SELECT 1 FROM dbo.Vehicles WHERE NoPlate = 0 AND VehiclePlate = @ComputedPlate)
+            THROW 50066, 'A registered vehicle with this license plate already exists.', 1;
+    END;
+
+    INSERT INTO dbo.Vehicles (CustomerId, PlateCodeId, PlateDigits, NoPlate, VehiclePlate, VehicleModel)
+    VALUES (@CustomerId, @PlateCodeId, @PlateDigits, ISNULL(@NoPlate, 0), @ComputedPlate, @VehicleModel);
+
+    SELECT VehicleId, CustomerId, VehiclePlate, VehicleModel
+    FROM dbo.Vehicles
+    WHERE VehicleId = SCOPE_IDENTITY();
+END;
+GO
+
 CREATE OR ALTER PROCEDURE dbo.usp_CreatePolicyWithTiers
     @InputCustomerId        INT = NULL,
     @FullName               NVARCHAR(120) = NULL,
@@ -2709,14 +2850,20 @@ BEGIN
         v.VehicleId, v.CustomerId, v.PlateCodeId, ISNULL(v.PlateDigits, '') AS PlateDigits,
         v.NoPlate, v.VehiclePlate, v.VehicleModel
     FROM dbo.Vehicles AS v
-    WHERE v.CustomerId <= 25 OR v.CustomerId > 2000 OR v.VehicleId <= 30
+    WHERE v.CustomerId <= 25 OR v.CustomerId > 2000 OR v.VehicleId <= 30 OR v.VehicleId > 2000
     ORDER BY v.CustomerId ASC, v.VehicleId ASC;
 
     -- Result Set 5: InsuranceProviders
-    SELECT ProviderId, ProviderName, SupportPhone, ContractEmail
-    FROM dbo.InsuranceProviders
-    WHERE IsActive = 1
-    ORDER BY ProviderId ASC;
+    SELECT
+        pr.ProviderId,
+        pr.ProviderName,
+        pr.SupportPhone,
+        ISNULL(pr.ContractEmail, '') AS ContractEmail,
+        pr.IsActive,
+        CONVERT(VARCHAR(10), pr.CreatedAt, 23) AS CreatedAt,
+        (SELECT COUNT(*) FROM dbo.InsurancePolicies AS p WHERE p.ProviderId = pr.ProviderId) AS PolicyCount
+    FROM dbo.InsuranceProviders AS pr
+    ORDER BY pr.ProviderId ASC;
 
     -- Result Set 6: Featured InsurancePolicies
     SELECT
@@ -3845,6 +3992,146 @@ BEGIN
 END;
 GO
 
+CREATE OR ALTER TRIGGER dbo.trg_Audit_InsuranceProviders
+ON dbo.InsuranceProviders
+AFTER INSERT, UPDATE
+AS
+BEGIN
+    IF @@ROWCOUNT = 0 RETURN;
+    SET NOCOUNT ON;
+    DECLARE @ActorId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
+    IF @ActorId IS NULL RETURN;
+
+    DECLARE @EvtMap TABLE (ChangeEventId BIGINT, EntityId BIGINT);
+
+    IF EXISTS (SELECT 1 FROM inserted) AND NOT EXISTS (SELECT 1 FROM deleted)
+    BEGIN
+        MERGE INTO dbo.AuditChangeEvents AS tgt
+        USING (SELECT ProviderId, CAST(LEFT(ProviderName, 100) AS VARCHAR(100)) AS EntityCode FROM inserted) AS src
+        ON 1 = 0
+        WHEN NOT MATCHED THEN
+            INSERT (EntityType, EntityId, EntityCode, OperationType, ChangedByUserId)
+            VALUES ('InsuranceProviders', src.ProviderId, src.EntityCode, 'CREATE', @ActorId)
+        OUTPUT inserted.ChangeEventId, src.ProviderId INTO @EvtMap (ChangeEventId, EntityId);
+
+        INSERT INTO dbo.AuditChangeDetails (ChangeEventId, FieldName, OldValue, NewValue)
+        SELECT m.ChangeEventId, v.FieldName, NULL, v.NewVal
+        FROM inserted AS i
+        INNER JOIN @EvtMap AS m ON m.EntityId = i.ProviderId
+        CROSS APPLY (VALUES
+            ('ProviderName',  CAST(i.ProviderName AS NVARCHAR(400))),
+            ('SupportPhone',  CAST(i.SupportPhone AS NVARCHAR(400))),
+            ('ContractEmail', CAST(i.ContractEmail AS NVARCHAR(400))),
+            ('IsActive',      CAST(i.IsActive AS NVARCHAR(400)))
+        ) AS v(FieldName, NewVal)
+        WHERE v.NewVal IS NOT NULL;
+    END
+    ELSE IF EXISTS (SELECT 1 FROM inserted) AND EXISTS (SELECT 1 FROM deleted)
+    BEGIN
+        DECLARE @Diffs TABLE (
+            EntityId BIGINT, EntityCode VARCHAR(100),
+            FieldName VARCHAR(64), OldVal NVARCHAR(400), NewVal NVARCHAR(400)
+        );
+
+        INSERT INTO @Diffs (EntityId, EntityCode, FieldName, OldVal, NewVal)
+        SELECT i.ProviderId, CAST(LEFT(i.ProviderName, 100) AS VARCHAR(100)), v.FieldName, v.OldVal, v.NewVal
+        FROM inserted AS i
+        INNER JOIN deleted AS d ON i.ProviderId = d.ProviderId
+        CROSS APPLY (VALUES
+            ('ProviderName',  CAST(d.ProviderName AS NVARCHAR(400)),  CAST(i.ProviderName AS NVARCHAR(400))),
+            ('SupportPhone',  CAST(d.SupportPhone AS NVARCHAR(400)),  CAST(i.SupportPhone AS NVARCHAR(400))),
+            ('ContractEmail', CAST(d.ContractEmail AS NVARCHAR(400)), CAST(i.ContractEmail AS NVARCHAR(400))),
+            ('IsActive',      CAST(d.IsActive AS NVARCHAR(400)),      CAST(i.IsActive AS NVARCHAR(400)))
+        ) AS v(FieldName, OldVal, NewVal)
+        WHERE ISNULL(v.OldVal, N'<<NULL>>') <> ISNULL(v.NewVal, N'<<NULL>>');
+
+        IF NOT EXISTS (SELECT 1 FROM @Diffs) RETURN;
+
+        MERGE INTO dbo.AuditChangeEvents AS tgt
+        USING (SELECT DISTINCT EntityId, EntityCode FROM @Diffs) AS src
+        ON 1 = 0
+        WHEN NOT MATCHED THEN
+            INSERT (EntityType, EntityId, EntityCode, OperationType, ChangedByUserId)
+            VALUES ('InsuranceProviders', src.EntityId, src.EntityCode, 'UPDATE', @ActorId)
+        OUTPUT inserted.ChangeEventId, src.EntityId INTO @EvtMap (ChangeEventId, EntityId);
+
+        INSERT INTO dbo.AuditChangeDetails (ChangeEventId, FieldName, OldValue, NewValue)
+        SELECT m.ChangeEventId, dr.FieldName, dr.OldVal, dr.NewVal
+        FROM @Diffs AS dr
+        INNER JOIN @EvtMap AS m ON m.EntityId = dr.EntityId;
+    END;
+END;
+GO
+
+CREATE OR ALTER TRIGGER dbo.trg_Audit_Vehicles
+ON dbo.Vehicles
+AFTER INSERT, UPDATE
+AS
+BEGIN
+    IF @@ROWCOUNT = 0 RETURN;
+    SET NOCOUNT ON;
+    DECLARE @ActorId INT = TRY_CAST(SESSION_CONTEXT(N'AppUserId') AS INT);
+    IF @ActorId IS NULL RETURN;
+
+    DECLARE @EvtMap TABLE (ChangeEventId BIGINT, EntityId BIGINT);
+
+    IF EXISTS (SELECT 1 FROM inserted) AND NOT EXISTS (SELECT 1 FROM deleted)
+    BEGIN
+        MERGE INTO dbo.AuditChangeEvents AS tgt
+        USING (SELECT VehicleId, CAST(VehiclePlate AS VARCHAR(100)) AS EntityCode FROM inserted) AS src
+        ON 1 = 0
+        WHEN NOT MATCHED THEN
+            INSERT (EntityType, EntityId, EntityCode, OperationType, ChangedByUserId)
+            VALUES ('Vehicles', src.VehicleId, src.EntityCode, 'CREATE', @ActorId)
+        OUTPUT inserted.ChangeEventId, src.VehicleId INTO @EvtMap (ChangeEventId, EntityId);
+
+        INSERT INTO dbo.AuditChangeDetails (ChangeEventId, FieldName, OldValue, NewValue)
+        SELECT m.ChangeEventId, v.FieldName, NULL, v.NewVal
+        FROM inserted AS i
+        INNER JOIN @EvtMap AS m ON m.EntityId = i.VehicleId
+        CROSS APPLY (VALUES
+            ('VehiclePlate', CAST(i.VehiclePlate AS NVARCHAR(400))),
+            ('VehicleModel', CAST(i.VehicleModel AS NVARCHAR(400))),
+            ('NoPlate',      CAST(i.NoPlate AS NVARCHAR(400)))
+        ) AS v(FieldName, NewVal)
+        WHERE v.NewVal IS NOT NULL;
+    END
+    ELSE IF EXISTS (SELECT 1 FROM inserted) AND EXISTS (SELECT 1 FROM deleted)
+    BEGIN
+        DECLARE @Diffs TABLE (
+            EntityId BIGINT, EntityCode VARCHAR(100),
+            FieldName VARCHAR(64), OldVal NVARCHAR(400), NewVal NVARCHAR(400)
+        );
+
+        INSERT INTO @Diffs (EntityId, EntityCode, FieldName, OldVal, NewVal)
+        SELECT i.VehicleId, CAST(i.VehiclePlate AS VARCHAR(100)), v.FieldName, v.OldVal, v.NewVal
+        FROM inserted AS i
+        INNER JOIN deleted AS d ON i.VehicleId = d.VehicleId
+        CROSS APPLY (VALUES
+            ('VehiclePlate', CAST(d.VehiclePlate AS NVARCHAR(400)), CAST(i.VehiclePlate AS NVARCHAR(400))),
+            ('VehicleModel', CAST(d.VehicleModel AS NVARCHAR(400)), CAST(i.VehicleModel AS NVARCHAR(400))),
+            ('NoPlate',      CAST(d.NoPlate AS NVARCHAR(400)),      CAST(i.NoPlate AS NVARCHAR(400)))
+        ) AS v(FieldName, OldVal, NewVal)
+        WHERE ISNULL(v.OldVal, N'<<NULL>>') <> ISNULL(v.NewVal, N'<<NULL>>');
+
+        IF NOT EXISTS (SELECT 1 FROM @Diffs) RETURN;
+
+        MERGE INTO dbo.AuditChangeEvents AS tgt
+        USING (SELECT DISTINCT EntityId, EntityCode FROM @Diffs) AS src
+        ON 1 = 0
+        WHEN NOT MATCHED THEN
+            INSERT (EntityType, EntityId, EntityCode, OperationType, ChangedByUserId)
+            VALUES ('Vehicles', src.EntityId, src.EntityCode, 'UPDATE', @ActorId)
+        OUTPUT inserted.ChangeEventId, src.EntityId INTO @EvtMap (ChangeEventId, EntityId);
+
+        INSERT INTO dbo.AuditChangeDetails (ChangeEventId, FieldName, OldValue, NewValue)
+        SELECT m.ChangeEventId, dr.FieldName, dr.OldVal, dr.NewVal
+        FROM @Diffs AS dr
+        INNER JOIN @EvtMap AS m ON m.EntityId = dr.EntityId;
+    END;
+END;
+GO
+
 -- 6. Trigger on dbo.InsurancePolicies & PolicyQuotaTiers
 CREATE OR ALTER TRIGGER dbo.trg_Audit_InsurancePolicies
 ON dbo.InsurancePolicies
@@ -4200,7 +4487,8 @@ BEGIN
            OR (@SectionScope = 'groups'      AND e.EntityType = 'UserGroups'  AND ISNULL(TRY_CAST(SESSION_CONTEXT(N'CanManageUsers') AS BIT), 0) = 1)
            OR (@SectionScope = 'trucks'      AND e.EntityType = 'TowTrucks')
            OR (@SectionScope = 'drivers'     AND e.EntityType = 'Drivers')
-           OR (@SectionScope = 'customers'   AND e.EntityType = 'Customers')
+           OR (@SectionScope = 'customers'   AND e.EntityType IN ('Customers', 'Vehicles'))
+           OR (@SectionScope = 'providers'   AND e.EntityType = 'InsuranceProviders')
            OR (@SectionScope = 'policies'    AND e.EntityType IN ('InsurancePolicies', 'PolicyQuotaTiers'))
            OR (@SectionScope = 'tariffs'     AND e.EntityType = 'Tariffs')
            OR (@SectionScope = 'billing'     AND e.EntityType IN ('TowInvoices', 'InvoicePayments'))
