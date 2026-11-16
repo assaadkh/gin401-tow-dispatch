@@ -1736,23 +1736,31 @@ app.MapPost("/api/concurrency/simulate-race", async (HttpContext httpContext) =>
 ==============================================================================*/
 app.MapGet("/api/performance/search", async (
     HttpContext httpContext,
-    string mode,
+    string? mode,
     int? policyId,
     string? issueType,
     string? status,
     string? startDate,
     string? endDate,
-    string? vehiclePlate) =>
+    string? vehiclePlate,
+    string? matchMode,
+    string? domain) =>
 {
     var statsMessages = new List<string>();
     await using var conn = await OpenAuthenticatedConnectionAsync(httpContext);
     conn.InfoMessage += (_, e) => statsMessages.Add(e.Message);
 
-    string normalizedMode = (mode ?? "daterange").Trim().ToLowerInvariant();
+    string normalizedMode = (mode ?? (string.IsNullOrWhiteSpace(domain) ? "daterange" : "domain")).Trim().ToLowerInvariant();
+    string normalizedMatch = string.Equals(matchMode, "any", StringComparison.OrdinalIgnoreCase) ? "any" : "all";
     string indexName;
     string queryPlanNote;
 
-    if (normalizedMode == "policy")
+    if (normalizedMode == "domain" && !string.IsNullOrWhiteSpace(domain))
+    {
+        indexName = "UX_Vehicles_RegisteredPlate + IX_TowRequests_Status_CreatedAt_Covering + UX_TowInvoices_TowRequestId_Covering";
+        queryPlanNote = $"Parameterized Domain ({normalizedMatch.ToUpperInvariant()}) via OPENJSON + SARGable Pre-Bounds -> Index Seeks, 0 Dynamic SQL";
+    }
+    else if (normalizedMode == "policy")
     {
         indexName = "IX_TowRequests_Policy_Issue_CreatedAt + UX_TowInvoices_TowRequestId_Covering + PK_Vehicles";
         queryPlanNote = "Index Seeks across all 3 normalized tables, 0 Key Lookups, 0 Sort (ORDERED FORWARD by CreatedAt DESC)";
@@ -1789,6 +1797,9 @@ app.MapGet("/api/performance/search", async (
     pEnd.Value = end;
 
     cmd.Parameters.Add("@VehiclePlate", SqlDbType.VarChar, 30).Value = (vehiclePlate ?? "M 100001").Trim();
+    cmd.Parameters.Add("@MatchMode", SqlDbType.VarChar, 10).Value = normalizedMatch;
+    cmd.Parameters.Add("@DomainJson", SqlDbType.NVarChar, -1).Value =
+        string.IsNullOrWhiteSpace(domain) ? DBNull.Value : domain;
 
     var sw = Stopwatch.StartNew();
     var rows = new List<object>();

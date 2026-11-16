@@ -28,14 +28,15 @@ Run the 5 SQL scripts in order against your local SQL Server (`localhost`) using
 sqlcmd -S localhost -E -I -b -i "sql\01_create_schema_and_indexes.sql"
 sqlcmd -S localhost -E -I -b -i "sql\02_programmability_logic.sql"
 sqlcmd -S localhost -E -I -b -i "sql\03_seed_120k_data.sql"
-sqlcmd -S localhost -E -I -b -v APP_DB_PASSWORD="TowApp_2026!Secure#Login" -i "sql\04_security_least_privilege.sql"
+sqlcmd -S localhost -E -I -b -v APP_DB_PASSWORD="YourPasswordHere" -i "sql\04_security_least_privilege.sql"
 sqlcmd -S localhost -E -I -b -i "sql\05_performance_and_concurrency_tests.sql"
 ```
 
 ### Step 2: Configure Environment Variable (`.env`)
-Copy [`backend/.env.example`](file:///c:/Users/user/Desktop/Uni/gin401/project/backend/.env.example) to `backend/.env` and set your least-privilege connection string:
+Copy [`backend/.env.example`](backend/.env.example) to `backend/.env` and set your least-privilege connection string:
 ```ini
-TOW_DB_CONNECTION_STRING=Server=localhost;Database=GIN401_TowDispatch;User Id=tow_cad_app_login;Password=TowApp_2026!Secure#Login;TrustServerCertificate=True;
+TOW_DB_CONNECTION_STRING=Server=localhost;Database=GIN401_TowDispatch;User Id=tow_cad_app_login;Password=YourPasswordHere;TrustServerCertificate=True;
+TRACKER_TOKEN_SECRET=Your64HexCharacterSessionSecretHere
 ```
 
 ### Step 3: Build & Start the Application
@@ -49,7 +50,7 @@ dotnet build -c Release
 ```
 
 **Start the Unified Web API + CAD Portal (`http://localhost:5050`):**
-Double-click [`start_app.bat`](file:///c:/Users/user/Desktop/Uni/gin401/project/start_app.bat) or run:
+Double-click [`start_app.bat`](start_app.bat) or run:
 ```powershell
 cd backend
 dotnet run --urls "http://localhost:5050"
@@ -58,21 +59,21 @@ Then open **[http://localhost:5050](http://localhost:5050)** in your browser.
 
 ### Seeded Command Desk Operator Credentials (BCrypt Cost=12)
 
-| Operator Username | Password | Full Name & Role | Station |
+| Operator Username | Password | Role & Group | Station |
 | :--- | :--- | :--- | :--- |
-| `assaad.khalife` | `Tracker@2026` | Assaad Khalife — Chief Operations & CAD Director | `BEY-CMD-01` |
-| `dispatch.beirut` | `Dispatch@2026` | Rami Nassar — Senior Emergency Dispatcher | `BEY-DSK-04` |
-| `fleet.manager` | `Fleet@2026` | Karim Haddad — Fleet & Recovery Supervisor | `BEY-FLT-02` |
-| `claims.underwriter` | `Claims@2026` | Maya Khoury — Insurance Policy Specialist | `BEY-INS-01` |
+| `assaad.khalife` | `Tracker@2026` | System Administrators (`ADMIN`) | `BEY-CMD-01` |
+| `dispatch.beirut` | `Dispatch@2026` | Emergency Roadside Dispatchers (`DISPATCHER`) | `BEY-DSK-04` |
+| `fleet.manager` | `Fleet@2026` | Fleet & Recovery Supervisors (`FLEET_MANAGER`) | `BEY-FLT-02` |
+| `claims.underwriter` | `Claims@2026` | Insurance Policy & Claims Underwriters (`UNDERWRITER`) | `BEY-INS-01` |
 
 ---
 
 ## 3. Repository Structure
-* [`sql/01_create_schema_and_indexes.sql`](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/01_create_schema_and_indexes.sql) — Database, 19 normalized 3NF tables (`UserGroups`, `SystemUsers`, `AuditChangeEvents`, `AuditChangeDetails`, etc.), sequences, constraints, and revised covering/filtered indexes
-* [`sql/02_programmability_logic.sql`](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/02_programmability_logic.sql) — Scalar/TVF functions, 13 set-based `SESSION_CONTEXT` audit & historical pricing triggers, analytical views, and 35 `dbo.usp_*` stored procedures
-* [`sql/03_seed_120k_data.sql`](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/03_seed_120k_data.sql) — Normalized `UserGroups`, BCrypt operator accounts, vehicles, drivers, assignments, tariffs, 120,000+ `TowRequests`, 120,000+ `TowInvoices`, and 148,000+ `InvoicePayments`
-* [`sql/04_security_least_privilege.sql`](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/04_security_least_privilege.sql) — Least-privilege login (`tow_cad_app_login`) and `EXECUTE`-only role (`db_tow_dispatcher_role`) across all 35 authorized procedures
-* [`sql/05_performance_and_concurrency_tests.sql`](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/05_performance_and_concurrency_tests.sql) — Final actual execution plans on >120k rows and automated business-rule/security verification suite
-* [`backend/Program.cs`](file:///c:/Users/user/Desktop/Uni/gin401/project/backend/Program.cs) — Standalone C# .NET 9 ADO.NET backend (`CommandType.StoredProcedure` + BCrypt + `SESSION_CONTEXT` + OSRM routing)
-* [`frontend/src/App.jsx`](file:///c:/Users/user/Desktop/Uni/gin401/project/frontend/src/App.jsx) — Standalone React.js CAD Dispatch, Configuration Hub (`Users`, `User Groups`, `Tow Trucks`, `Drivers`), Tariffs, Split Billing, Concurrency, Archive, and Section-Scoped Change Log UI
-* [`REPORT.md`](file:///c:/Users/user/Desktop/Uni/gin401/project/REPORT.md) & [`GIN401_Lab_Project_Report.docx`](file:///c:/Users/user/Desktop/Uni/gin401/project/GIN401_Lab_Project_Report.docx) — Complete technical report, 19-table 3NF ERD, final actual execution plans, test results, and AI usage disclaimer
+* [`sql/01_create_schema_and_indexes.sql`](sql/01_create_schema_and_indexes.sql) — Database, 19 normalized 3NF tables (`UserGroups`, `SystemUsers`, `AuditChangeEvents`, `AuditChangeDetails`, etc.), sequences, constraints, and revised covering/filtered indexes
+* [`sql/02_programmability_logic.sql`](sql/02_programmability_logic.sql) — Scalar/TVF functions, 13 set-based `SESSION_CONTEXT` audit & historical pricing triggers, analytical views, and 35 `dbo.usp_*` stored procedures
+* [`sql/03_seed_120k_data.sql`](sql/03_seed_120k_data.sql) — Normalized `UserGroups`, BCrypt operator accounts, vehicles, drivers, assignments, tariffs, 120,000+ `TowRequests`, 120,000+ `TowInvoices`, and 148,000+ `InvoicePayments`
+* [`sql/04_security_least_privilege.sql`](sql/04_security_least_privilege.sql) — Least-privilege login (`tow_cad_app_login`) and `EXECUTE`-only role (`db_tow_dispatcher_role`) across all 35 authorized procedures
+* [`sql/05_performance_and_concurrency_tests.sql`](sql/05_performance_and_concurrency_tests.sql) — Final actual execution plans on >120k rows and automated business-rule/security verification suite
+* [`backend/Program.cs`](backend/Program.cs) — Standalone C# .NET 9 ADO.NET backend (`CommandType.StoredProcedure` + BCrypt + `SESSION_CONTEXT` + OSRM routing)
+* [`frontend/src/App.jsx`](frontend/src/App.jsx) — Standalone React.js CAD Dispatch, Configuration Hub (`Users`, `User Groups`, `Tow Trucks`, `Drivers`), Tariffs, Split Billing, Concurrency, Domain Archive Search, and Odoo-Style Change Logs
+* [`REPORT.md`](REPORT.md) & [`GIN401_Lab_Project_Report.docx`](GIN401_Lab_Project_Report.docx) — Complete technical report, 19-table 3NF ERD, final actual execution plans, test results, and AI usage disclaimer

@@ -2149,17 +2149,229 @@ GO
   schema (TowRequests + Vehicles + TowInvoices).
 ==============================================================================*/
 CREATE OR ALTER PROCEDURE dbo.usp_SearchTowRequestsArchive
-    @Mode           VARCHAR(20),
-    @PolicyId       INT = 42,
-    @IssueType      VARCHAR(20) = 'Mechanical',
-    @Status         VARCHAR(25) = 'Done',
-    @StartDate      DATETIME2(0) = '2026-10-01T00:00:00',
-    @EndDate        DATETIME2(0) = '2026-11-01T00:00:00',
-    @VehiclePlate   VARCHAR(30) = 'M 100001'
+    @Mode           VARCHAR(20)   = 'domain',
+    @PolicyId       INT           = 42,
+    @IssueType      VARCHAR(20)   = 'Mechanical',
+    @Status         VARCHAR(25)   = 'Done',
+    @StartDate      DATETIME2(0)  = '2026-10-01T00:00:00',
+    @EndDate        DATETIME2(0)  = '2026-11-01T00:00:00',
+    @VehiclePlate   VARCHAR(30)   = 'M 100001',
+    @MatchMode      VARCHAR(10)   = 'all',
+    @DomainJson     NVARCHAR(MAX) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     SET STATISTICS IO ON;
+
+    IF @Mode = 'domain' AND @DomainJson IS NOT NULL
+    BEGIN
+        DECLARE @Rules TABLE
+        (
+            RuleId     INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+            Field      VARCHAR(40)       NOT NULL,
+            Op         VARCHAR(20)       NOT NULL,
+            Val        NVARCHAR(120)     NOT NULL,
+            EscapedVal NVARCHAR(360)     NOT NULL
+        );
+
+        INSERT INTO @Rules (Field, Op, Val, EscapedVal)
+        SELECT
+            LTRIM(RTRIM(ISNULL(j.field, ''))),
+            LTRIM(RTRIM(ISNULL(j.op, '='))),
+            LTRIM(RTRIM(ISNULL(j.val, ''))),
+            REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(j.val, ''))), N'[', N'[[]'), N'%', N'[%]'), N'_', N'[_]')
+        FROM OPENJSON(@DomainJson)
+        WITH
+        (
+            field VARCHAR(40)   '$.field',
+            op    VARCHAR(20)   '$.op',
+            val   NVARCHAR(120) '$.value'
+        ) AS j
+        WHERE LEN(LTRIM(RTRIM(ISNULL(j.field, '')))) > 0
+          AND LEN(LTRIM(RTRIM(ISNULL(j.val, '')))) > 0;
+
+        DECLARE @RuleCount INT = (SELECT COUNT(*) FROM @Rules);
+        DECLARE @IsAll BIT = CASE WHEN LOWER(ISNULL(@MatchMode, 'all')) = 'any' THEN 0 ELSE 1 END;
+
+        -- Extract SARGable index pre-bounds when MatchMode = 'all' (AND)
+        DECLARE @BoundStatus      VARCHAR(25)   = NULL,
+                @BoundMinDate     DATETIME2(0)  = NULL,
+                @BoundMaxDateExcl DATETIME2(0)  = NULL,
+                @UsePlatePreSeek  BIT           = 0;
+
+        DECLARE @MatchedVehicles TABLE (VehicleId INT NOT NULL PRIMARY KEY);
+
+        IF @IsAll = 1 AND @RuleCount > 0
+        BEGIN
+            SELECT TOP (1) @BoundStatus = r.Val
+            FROM @Rules AS r
+            WHERE r.Field = 'status' AND r.Op = '=';
+
+            SELECT @BoundMinDate = MAX(TRY_CAST(r.Val AS DATETIME2(0)))
+            FROM @Rules AS r
+            WHERE r.Field = 'createdAt' AND r.Op IN ('>=', '=')
+              AND TRY_CAST(r.Val AS DATETIME2(0)) IS NOT NULL;
+
+            SELECT @BoundMaxDateExcl = MIN(CAST(DATEADD(DAY, 1, TRY_CAST(r.Val AS DATE)) AS DATETIME2(0)))
+            FROM @Rules AS r
+            WHERE r.Field = 'createdAt' AND r.Op IN ('<=', '=')
+              AND TRY_CAST(r.Val AS DATE) IS NOT NULL;
+
+            IF EXISTS (SELECT 1 FROM @Rules WHERE Field = 'vehiclePlate' AND Op IN ('=', 'starts_with'))
+            BEGIN
+                SET @UsePlatePreSeek = 1;
+                DECLARE @PlateOp VARCHAR(20), @PlateRaw VARCHAR(60), @PlateEsc NVARCHAR(180);
+                SELECT TOP (1)
+                    @PlateOp  = r.Op,
+                    @PlateRaw = LEFT(r.Val, 60),
+                    @PlateEsc = LEFT(r.EscapedVal, 180)
+                FROM @Rules AS r
+                WHERE r.Field = 'vehiclePlate' AND r.Op IN ('=', 'starts_with')
+                ORDER BY CASE WHEN r.Op = '=' THEN 0 ELSE 1 END;
+
+                IF @PlateOp = '='
+                BEGIN
+                    INSERT INTO @MatchedVehicles (VehicleId)
+                    SELECT v.VehicleId
+                    FROM dbo.Vehicles AS v
+                    WHERE v.NoPlate = 0 AND v.VehiclePlate = @PlateRaw;
+                END
+                ELSE
+                BEGIN
+                    INSERT INTO @MatchedVehicles (VehicleId)
+                    SELECT v.VehicleId
+                    FROM dbo.Vehicles AS v
+                    WHERE v.NoPlate = 0 AND v.VehiclePlate LIKE @PlateEsc + N'%';
+                END;
+            END;
+        END;
+
+        SELECT TOP (50)
+            tr.TowRequestId,
+            tr.RequestNumber,
+            v.VehiclePlate,
+            v.VehicleModel,
+            tr.IssueType,
+            tr.Status,
+            tr.RouteDistanceKm AS ActualDistanceKm,
+            tr.DistanceSource,
+            inv.CoveredDistanceKm AS AllowedDistanceKm,
+            inv.CustomerBilledAmount AS OverageAmount,
+            inv.InsurerBilledAmount,
+            inv.TotalAmount,
+            inv.InvoiceStatus,
+            tr.CreatedAt
+        FROM dbo.TowRequests AS tr
+        INNER JOIN dbo.Vehicles AS v ON tr.VehicleId = v.VehicleId
+        INNER JOIN dbo.TowInvoices AS inv ON tr.TowRequestId = inv.TowRequestId
+        WHERE (@BoundStatus IS NULL OR tr.Status = @BoundStatus)
+          AND (@BoundMinDate IS NULL OR tr.CreatedAt >= @BoundMinDate)
+          AND (@BoundMaxDateExcl IS NULL OR tr.CreatedAt < @BoundMaxDateExcl)
+          AND (@UsePlatePreSeek = 0 OR tr.VehicleId IN (SELECT mv.VehicleId FROM @MatchedVehicles AS mv))
+          AND (
+              @RuleCount = 0
+              OR (
+                  @IsAll = 1
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM @Rules AS r
+                      WHERE NOT (
+                          (r.Field = 'vehiclePlate' AND (
+                              (r.Op = '='           AND v.VehiclePlate = r.Val) OR
+                              (r.Op = '!='          AND v.VehiclePlate <> r.Val) OR
+                              (r.Op = 'starts_with' AND v.VehiclePlate LIKE r.EscapedVal + N'%') OR
+                              (r.Op = 'contains'    AND v.VehiclePlate LIKE N'%' + r.EscapedVal + N'%')
+                          ))
+                          OR (r.Field = 'status' AND (
+                              (r.Op = '='  AND tr.Status = r.Val) OR
+                              (r.Op = '!=' AND tr.Status <> r.Val)
+                          ))
+                          OR (r.Field = 'createdAt' AND (
+                              (r.Op = '>=' AND TRY_CAST(r.Val AS DATETIME2(0)) IS NOT NULL AND tr.CreatedAt >= TRY_CAST(r.Val AS DATETIME2(0))) OR
+                              (r.Op = '<=' AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND tr.CreatedAt < DATEADD(DAY, 1, TRY_CAST(r.Val AS DATE))) OR
+                              (r.Op = '='  AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND CAST(tr.CreatedAt AS DATE) = TRY_CAST(r.Val AS DATE))
+                          ))
+                          OR (r.Field = 'issueType' AND (
+                              (r.Op = '='  AND tr.IssueType = r.Val) OR
+                              (r.Op = '!=' AND tr.IssueType <> r.Val)
+                          ))
+                          OR (r.Field = 'requestNumber' AND (
+                              (r.Op = '='           AND tr.RequestNumber = r.Val) OR
+                              (r.Op = '!='          AND tr.RequestNumber <> r.Val) OR
+                              (r.Op = 'starts_with' AND tr.RequestNumber LIKE r.EscapedVal + N'%') OR
+                              (r.Op = 'contains'    AND tr.RequestNumber LIKE N'%' + r.EscapedVal + N'%')
+                          ))
+                          OR (r.Field = 'invoiceStatus' AND (
+                              (r.Op = '='  AND inv.InvoiceStatus = r.Val) OR
+                              (r.Op = '!=' AND inv.InvoiceStatus <> r.Val)
+                          ))
+                          OR (r.Field = 'policyId' AND TRY_CAST(r.Val AS INT) IS NOT NULL AND (
+                              (r.Op = '='  AND tr.PolicyId = TRY_CAST(r.Val AS INT)) OR
+                              (r.Op = '>=' AND tr.PolicyId >= TRY_CAST(r.Val AS INT)) OR
+                              (r.Op = '<=' AND tr.PolicyId <= TRY_CAST(r.Val AS INT))
+                          ))
+                          OR (r.Field = 'distanceKm' AND TRY_CAST(r.Val AS DECIMAL(8,2)) IS NOT NULL AND (
+                              (r.Op = '='  AND tr.RouteDistanceKm = TRY_CAST(r.Val AS DECIMAL(8,2))) OR
+                              (r.Op = '>=' AND tr.RouteDistanceKm >= TRY_CAST(r.Val AS DECIMAL(8,2))) OR
+                              (r.Op = '<=' AND tr.RouteDistanceKm <= TRY_CAST(r.Val AS DECIMAL(8,2)))
+                          ))
+                      )
+                  )
+              )
+              OR (
+                  @IsAll = 0
+                  AND EXISTS (
+                      SELECT 1
+                      FROM @Rules AS r
+                      WHERE (
+                          (r.Field = 'vehiclePlate' AND (
+                              (r.Op = '='           AND v.VehiclePlate = r.Val) OR
+                              (r.Op = '!='          AND v.VehiclePlate <> r.Val) OR
+                              (r.Op = 'starts_with' AND v.VehiclePlate LIKE r.EscapedVal + N'%') OR
+                              (r.Op = 'contains'    AND v.VehiclePlate LIKE N'%' + r.EscapedVal + N'%')
+                          ))
+                          OR (r.Field = 'status' AND (
+                              (r.Op = '='  AND tr.Status = r.Val) OR
+                              (r.Op = '!=' AND tr.Status <> r.Val)
+                          ))
+                          OR (r.Field = 'createdAt' AND (
+                              (r.Op = '>=' AND TRY_CAST(r.Val AS DATETIME2(0)) IS NOT NULL AND tr.CreatedAt >= TRY_CAST(r.Val AS DATETIME2(0))) OR
+                              (r.Op = '<=' AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND tr.CreatedAt < DATEADD(DAY, 1, TRY_CAST(r.Val AS DATE))) OR
+                              (r.Op = '='  AND TRY_CAST(r.Val AS DATE) IS NOT NULL AND CAST(tr.CreatedAt AS DATE) = TRY_CAST(r.Val AS DATE))
+                          ))
+                          OR (r.Field = 'issueType' AND (
+                              (r.Op = '='  AND tr.IssueType = r.Val) OR
+                              (r.Op = '!=' AND tr.IssueType <> r.Val)
+                          ))
+                          OR (r.Field = 'requestNumber' AND (
+                              (r.Op = '='           AND tr.RequestNumber = r.Val) OR
+                              (r.Op = '!='          AND tr.RequestNumber <> r.Val) OR
+                              (r.Op = 'starts_with' AND tr.RequestNumber LIKE r.EscapedVal + N'%') OR
+                              (r.Op = 'contains'    AND tr.RequestNumber LIKE N'%' + r.EscapedVal + N'%')
+                          ))
+                          OR (r.Field = 'invoiceStatus' AND (
+                              (r.Op = '='  AND inv.InvoiceStatus = r.Val) OR
+                              (r.Op = '!=' AND inv.InvoiceStatus <> r.Val)
+                          ))
+                          OR (r.Field = 'policyId' AND TRY_CAST(r.Val AS INT) IS NOT NULL AND (
+                              (r.Op = '='  AND tr.PolicyId = TRY_CAST(r.Val AS INT)) OR
+                              (r.Op = '>=' AND tr.PolicyId >= TRY_CAST(r.Val AS INT)) OR
+                              (r.Op = '<=' AND tr.PolicyId <= TRY_CAST(r.Val AS INT))
+                          ))
+                          OR (r.Field = 'distanceKm' AND TRY_CAST(r.Val AS DECIMAL(8,2)) IS NOT NULL AND (
+                              (r.Op = '='  AND tr.RouteDistanceKm = TRY_CAST(r.Val AS DECIMAL(8,2))) OR
+                              (r.Op = '>=' AND tr.RouteDistanceKm >= TRY_CAST(r.Val AS DECIMAL(8,2))) OR
+                              (r.Op = '<=' AND tr.RouteDistanceKm <= TRY_CAST(r.Val AS DECIMAL(8,2)))
+                          ))
+                      )
+                  )
+              )
+          )
+        ORDER BY tr.CreatedAt DESC;
+
+        SET STATISTICS IO OFF;
+        RETURN;
+    END;
 
     IF @Mode = 'policy'
     BEGIN

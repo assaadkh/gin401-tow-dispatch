@@ -303,12 +303,119 @@ export default function App() {
   const [optimisticNote, setOptimisticNote] = useState('Updated pickup note: customer moved 50m ahead.');
   const [optimisticResult, setOptimisticResult] = useState(null);
 
-  // Performance & Security Lab State
-  const [perfMode, setPerfMode] = useState('date_status'); // 'date_status' | 'policy' | 'plate'
-  const [perfStatus, setPerfStatus] = useState('Done');
-  const [perfStart, setPerfStart] = useState('2026-01-01');
-  const [perfEnd, setPerfEnd] = useState('2026-12-31');
-  const [perfPlate, setPerfPlate] = useState('M 100001');
+  // Odoo-Style Domain Filter & Security Lab State (>120k Rows Archive)
+  const DOMAIN_FIELD_DEFS = {
+    vehiclePlate: {
+      label: 'Vehicle Plate',
+      odooField: 'vehicle_plate',
+      type: 'text',
+      placeholder: 'e.g. M 1',
+      defaultVal: 'M 1',
+      ops: [
+        { value: 'starts_with', label: 'starts with', odooOp: '=like' },
+        { value: 'contains', label: 'contains', odooOp: 'ilike' },
+        { value: '=', label: 'is equal to (=)', odooOp: '=' },
+        { value: '!=', label: 'is not (!=)', odooOp: '!=' }
+      ]
+    },
+    status: {
+      label: 'Dispatch Status',
+      odooField: 'status',
+      type: 'select',
+      options: [
+        'Done',
+        'InProgress',
+        'Approved',
+        'PendingInsurance',
+        'Draft',
+        'UnableToLoad',
+        'Rejected'
+      ],
+      defaultVal: 'Done',
+      ops: [
+        { value: '=', label: 'is (=)', odooOp: '=' },
+        { value: '!=', label: 'is not (!=)', odooOp: '!=' }
+      ]
+    },
+    createdAt: {
+      label: 'Created Date',
+      odooField: 'created_at',
+      type: 'date',
+      defaultVal: '2026-01-01',
+      ops: [
+        { value: '>=', label: 'is on or after (>=)', odooOp: '>=' },
+        { value: '<=', label: 'is on or before (<=)', odooOp: '<=' },
+        { value: '=', label: 'is on (=)', odooOp: '=' }
+      ]
+    },
+    issueType: {
+      label: 'Incident Type',
+      odooField: 'issue_type',
+      type: 'select',
+      options: ['Mechanical', 'Accident', 'Winch', 'Battery', 'Tire', 'Other'],
+      defaultVal: 'Mechanical',
+      ops: [
+        { value: '=', label: 'is (=)', odooOp: '=' },
+        { value: '!=', label: 'is not (!=)', odooOp: '!=' }
+      ]
+    },
+    requestNumber: {
+      label: 'Request #',
+      odooField: 'request_number',
+      type: 'text',
+      placeholder: 'e.g. TOW/2026/',
+      defaultVal: 'TOW/2026/',
+      ops: [
+        { value: 'starts_with', label: 'starts with', odooOp: '=like' },
+        { value: 'contains', label: 'contains', odooOp: 'ilike' },
+        { value: '=', label: 'is equal to (=)', odooOp: '=' }
+      ]
+    },
+    invoiceStatus: {
+      label: 'Invoice Status',
+      odooField: 'invoice_status',
+      type: 'select',
+      options: ['Paid', 'PartiallyPaid', 'Unpaid', 'Draft', 'Void'],
+      defaultVal: 'Paid',
+      ops: [
+        { value: '=', label: 'is (=)', odooOp: '=' },
+        { value: '!=', label: 'is not (!=)', odooOp: '!=' }
+      ]
+    },
+    policyId: {
+      label: 'Policy ID',
+      odooField: 'policy_id',
+      type: 'number',
+      placeholder: 'e.g. 42',
+      defaultVal: '42',
+      ops: [
+        { value: '=', label: '=', odooOp: '=' },
+        { value: '>=', label: '>=', odooOp: '>=' },
+        { value: '<=', label: '<=', odooOp: '<=' }
+      ]
+    },
+    distanceKm: {
+      label: 'Road Distance (km)',
+      odooField: 'route_distance_km',
+      type: 'number',
+      placeholder: 'e.g. 25',
+      defaultVal: '25',
+      ops: [
+        { value: '>=', label: '>=', odooOp: '>=' },
+        { value: '<=', label: '<=', odooOp: '<=' },
+        { value: '=', label: '=', odooOp: '=' }
+      ]
+    }
+  };
+
+  const DEFAULT_ARCHIVE_DOMAIN = [
+    { id: 1, field: 'status', op: '=', value: 'Done' },
+    { id: 2, field: 'createdAt', op: '>=', value: '2026-01-01' },
+    { id: 3, field: 'createdAt', op: '<=', value: '2026-12-31' }
+  ];
+
+  const [domainMatchMode, setDomainMatchMode] = useState('all'); // 'all' | 'any'
+  const [domainRules, setDomainRules] = useState(DEFAULT_ARCHIVE_DOMAIN);
   const [perfResult, setPerfResult] = useState(null);
   const [perfLoading, setPerfLoading] = useState(false);
 
@@ -1324,25 +1431,92 @@ export default function App() {
     }
   };
 
-  // >120k Rows Performance Search
-  const runPerformanceQuery = async (overrideMode, overridePlate) => {
+  // >120k Rows Odoo Domain Search
+  const runPerformanceQuery = async (overrideRules, overrideMatchMode) => {
     setPerfLoading(true);
-    const modeVal = overrideMode || perfMode;
-    const plateVal = overridePlate !== undefined ? overridePlate : perfPlate;
+    setArchiveViewMode('list');
+    const rulesToRun = (overrideRules || domainRules)
+      .filter(r => String(r.value ?? '').trim() !== '')
+      .map(r => ({
+        field: r.field,
+        op: r.op,
+        value: String(r.value).trim()
+      }));
+    const matchVal = overrideMatchMode || domainMatchMode;
     try {
-      const url = `${API_BASE}/performance/search?mode=${encodeURIComponent(
-        modeVal
-      )}&status=${encodeURIComponent(perfStatus)}&startDate=${encodeURIComponent(
-        perfStart
-      )}&endDate=${encodeURIComponent(perfEnd)}&vehiclePlate=${encodeURIComponent(plateVal)}`;
-      const res = await apiFetch(url);
+      const params = new URLSearchParams({
+        mode: 'domain',
+        matchMode: matchVal,
+        domain: JSON.stringify(rulesToRun)
+      });
+      const res = await apiFetch(`${API_BASE}/performance/search?${params.toString()}`);
       const data = await res.json();
       setPerfResult(data);
     } catch (err) {
-      showToast('error', 'Performance Query Error', err.message);
+      showToast('error', 'Archive Domain Search Error', err.message);
     } finally {
       setPerfLoading(false);
     }
+  };
+
+  const addDomainRule = afterIndex => {
+    const newRule = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      field: 'vehiclePlate',
+      op: 'starts_with',
+      value: ''
+    };
+    setDomainRules(prev => {
+      if (afterIndex === undefined || afterIndex === null) return [...prev, newRule];
+      const next = [...prev];
+      next.splice(afterIndex + 1, 0, newRule);
+      return next;
+    });
+  };
+
+  const updateDomainRuleField = (id, newField) => {
+    const def = DOMAIN_FIELD_DEFS[newField] || DOMAIN_FIELD_DEFS.vehiclePlate;
+    setDomainRules(prev =>
+      prev.map(r =>
+        r.id === id
+          ? {
+              ...r,
+              field: newField,
+              op: def.ops[0].value,
+              value: def.type === 'select' ? def.defaultVal : ''
+            }
+          : r
+      )
+    );
+  };
+
+  const updateDomainRule = (id, patch) => {
+    setDomainRules(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)));
+  };
+
+  const removeDomainRule = id => {
+    setDomainRules(prev => prev.filter(r => r.id !== id));
+  };
+
+  const formatOdooDomainExpression = () => {
+    const active = domainRules.filter(r => String(r.value ?? '').trim() !== '');
+    if (active.length === 0) return '[]';
+    const prefixOp =
+      active.length > 1
+        ? Array(active.length - 1)
+            .fill(domainMatchMode === 'any' ? "'|'" : "'&'")
+            .join(', ') + ', '
+        : '';
+    const tuples = active
+      .map(r => {
+        const def = DOMAIN_FIELD_DEFS[r.field] || DOMAIN_FIELD_DEFS.vehiclePlate;
+        const opObj = def.ops.find(o => o.value === r.op) || def.ops[0];
+        const formattedVal =
+          r.op === 'starts_with' ? `${r.value}%` : String(r.value);
+        return `('${def.odooField}', '${opObj.odooOp}', '${formattedVal.replace(/'/g, "\\'")}')`;
+      })
+      .join(', ');
+    return `[${prefixOp}${tuples}]`;
   };
 
   // Admin RBAC Role Preset Helper
@@ -1738,7 +1912,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === 'performance' && !perfResult) {
-      runPerformanceQuery('date_status', perfPlate);
+      runPerformanceQuery();
     } else if ((activeTab === 'users' || activeTab === 'groups') && currentUser) {
       fetchAdminUsers();
     }
@@ -8304,70 +8478,155 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="perf-filter-bar">
-                  <div>
-                    <label>Search Mode</label>
-                    <select value={perfMode} onChange={e => setPerfMode(e.target.value)}>
-                      <option value="date_status">Date Range &amp; Status</option>
-                      <option value="plate">Vehicle Plate History</option>
-                      <option value="policy">Policy &amp; Incident History</option>
-                    </select>
+                <div className="o-domain-box">
+                  <div className="o-domain-header">
+                    <div className="o-domain-match-line">
+                      <span>Match</span>
+                      <select
+                        className="o-domain-match-select"
+                        value={domainMatchMode}
+                        onChange={e => setDomainMatchMode(e.target.value)}
+                      >
+                        <option value="all">all</option>
+                        <option value="any">any</option>
+                      </select>
+                      <span>of the following rules:</span>
+                    </div>
+
+                    <div className="action-btn-group">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => addDomainRule()}
+                      >
+                        + New Rule
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => {
+                          setDomainMatchMode('all');
+                          setDomainRules(DEFAULT_ARCHIVE_DOMAIN);
+                          runPerformanceQuery(DEFAULT_ARCHIVE_DOMAIN, 'all');
+                        }}
+                      >
+                        Reset
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        title="Run automated SQL injection parameterization diagnostic"
+                        onClick={() => {
+                          const sqliRules = [
+                            { id: Date.now(), field: 'vehiclePlate', op: '=', value: "' OR 1=1 --" }
+                          ];
+                          setDomainMatchMode('all');
+                          setDomainRules(sqliRules);
+                          runPerformanceQuery(sqliRules, 'all');
+                        }}
+                      >
+                        Security Self-Check
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() => runPerformanceQuery()}
+                        disabled={perfLoading}
+                      >
+                        {perfLoading ? 'Searching...' : 'Search Archive'}
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <label>Dispatch Status</label>
-                    <select value={perfStatus} onChange={e => setPerfStatus(e.target.value)}>
-                      <option value="Done">Completed (Done)</option>
-                      <option value="InProgress">In Progress</option>
-                      <option value="Approved">Approved</option>
-                      <option value="UnableToLoad">Unable to Load</option>
-                      <option value="Rejected">Rejected</option>
-                    </select>
+
+                  <div className="o-domain-rules">
+                    {domainRules.length === 0 ? (
+                      <div className="muted" style={{ fontSize: '12.5px', padding: '4px 0' }}>
+                        No filter rules applied (matches latest 50 records). Click{' '}
+                        <strong>+ New Rule</strong> to filter by plate, status, date, policy, or
+                        invoice.
+                      </div>
+                    ) : (
+                      domainRules.map((rule, idx) => {
+                        const def =
+                          DOMAIN_FIELD_DEFS[rule.field] || DOMAIN_FIELD_DEFS.vehiclePlate;
+                        return (
+                          <div key={rule.id} className="o-domain-rule-row">
+                            <select
+                              value={rule.field}
+                              onChange={e => updateDomainRuleField(rule.id, e.target.value)}
+                            >
+                              {Object.entries(DOMAIN_FIELD_DEFS).map(([key, meta]) => (
+                                <option key={key} value={key}>
+                                  {meta.label}
+                                </option>
+                              ))}
+                            </select>
+
+                            <select
+                              value={rule.op}
+                              onChange={e => updateDomainRule(rule.id, { op: e.target.value })}
+                            >
+                              {def.ops.map(o => (
+                                <option key={o.value} value={o.value}>
+                                  {o.label}
+                                </option>
+                              ))}
+                            </select>
+
+                            {def.type === 'select' ? (
+                              <select
+                                value={rule.value}
+                                onChange={e => updateDomainRule(rule.id, { value: e.target.value })}
+                              >
+                                {def.options.map(opt => (
+                                  <option key={opt} value={opt}>
+                                    {opt}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type={def.type}
+                                placeholder={def.placeholder || 'Value...'}
+                                value={rule.value}
+                                onChange={e => updateDomainRule(rule.id, { value: e.target.value })}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    runPerformanceQuery();
+                                  }
+                                }}
+                              />
+                            )}
+
+                            <div className="action-btn-group">
+                              <button
+                                type="button"
+                                className="o-domain-icon-btn"
+                                title="Add rule below"
+                                onClick={() => addDomainRule(idx)}
+                              >
+                                +
+                              </button>
+                              <button
+                                type="button"
+                                className="o-domain-icon-btn"
+                                title="Remove rule"
+                                onClick={() => removeDomainRule(rule.id)}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
-                  <div>
-                    <label>From Date</label>
-                    <input
-                      type="date"
-                      value={perfStart}
-                      onChange={e => setPerfStart(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label>To Date</label>
-                    <input
-                      type="date"
-                      value={perfEnd}
-                      onChange={e => setPerfEnd(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label>Vehicle Plate</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. M 100001"
-                      value={perfPlate}
-                      onChange={e => setPerfPlate(e.target.value)}
-                    />
-                  </div>
-                  <div className="perf-btns">
-                    <button
-                      className="btn-primary"
-                      onClick={() => runPerformanceQuery()}
-                      disabled={perfLoading}
-                    >
-                      {perfLoading ? 'Searching...' : 'Search Archive'}
-                    </button>
-                    <button
-                      className="btn-secondary"
-                      title="Run automated input sanitization diagnostic"
-                      onClick={() => {
-                        const sqli = "' OR 1=1 --";
-                        setPerfMode('plate');
-                        setPerfPlate(sqli);
-                        runPerformanceQuery('plate', sqli);
-                      }}
-                    >
-                      Security Self-Check
-                    </button>
+
+                  <div className="o-domain-footer">
+                    <span className="o-domain-code">
+                      Domain: {formatOdooDomainExpression()}
+                    </span>
                   </div>
                 </div>
 

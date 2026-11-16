@@ -2,8 +2,6 @@
 
 **Project Title:** Roadside Assistance, Insurance Quota & Computer-Aided Towing Dispatch (CAD) System  
 **Course:** GIN401 — Lab Project  
-**Student / GitHub Account:** Assaad Khalife (`assaadkh`)  
-**Repository:** [https://github.com/assaadkh/gin401-tow-dispatch](https://github.com/assaadkh/gin401-tow-dispatch)  
 **Technology Stack:** Microsoft SQL Server (`T-SQL`) • Standalone C# (.NET 9 Web API with Pure `ADO.NET` / `Microsoft.Data.SqlClient` + `BCrypt.Net-Next`) • Standalone React.js + Google Maps / OSRM CAD UI  
 
 ---
@@ -73,7 +71,7 @@ Roadside assistance and towing dispatch centers in Lebanon manage thousands of e
 ---
 
 ## 4. Programmability, Concurrency, Security & Performance Summary
-1. **T-SQL Programmability ([02_programmability_logic.sql](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/02_programmability_logic.sql)):** 2 schema-bound scalar distance functions, 2 table-valued functions (`tvf_GetActiveTariff`, `tvf_CheckPolicyEligibility`), 2 `AFTER` immutability/audit triggers (`trg_TowRequests_ImmutabilityAndAudit`, `trg_TowInvoices_ProtectHistoricalPricing`), 2 window/aggregation views, and 24 `dbo.usp_*` stored procedures (including Admin user & permission management).
+1. **T-SQL Programmability ([`sql/02_programmability_logic.sql`](sql/02_programmability_logic.sql)):** 2 schema-bound scalar distance functions, 2 table-valued functions (`tvf_GetActiveTariff`, `tvf_CheckPolicyEligibility`), 13 `AFTER` immutability/audit triggers, 2 window/aggregation views, and 35 `dbo.usp_*` stored procedures.
 2. **Transactions & Concurrency:** `BEGIN TRANSACTION` + `TRY...CATCH` + `ROLLBACK` with `WITH (UPDLOCK, ROWLOCK)` pessimistic locking on policy quota tiers (`usp_ApproveAndDispatchTow`) and `ROWVERSION` optimistic concurrency on draft edits (`usp_UpdateDraftTowOptimistic`).
-3. **Security ([04_security_least_privilege.sql](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/04_security_least_privilege.sql)):** BCrypt (`cost = 12`) password hashing, `db_tow_dispatcher_role` restricted strictly to `EXECUTE` on authorized stored procedures (zero direct table/view access), 100% parameterized `ADO.NET`, and mandatory per-connection `SESSION_CONTEXT` validation.
-4. **Performance ([05_performance_and_concurrency_tests.sql](file:///c:/Users/user/Desktop/Uni/gin401/project/sql/05_performance_and_concurrency_tests.sql)):** Revised covering and filtered nonclustered indexes over the 120,000+ normalized rows delivering pure `Index Seek` plans (`0` Key Lookups, `0` Sort operators, `0–1 ms` runtime) documented via final actual execution plans in [REPORT.md](file:///c:/Users/user/Desktop/Uni/gin401/project/REPORT.md).
+3. **Security ([`sql/04_security_least_privilege.sql`](sql/04_security_least_privilege.sql)):** BCrypt (`cost = 12`) password hashing, 3NF `dbo.UserGroups` RBAC, `db_tow_dispatcher_role` restricted strictly to `EXECUTE` on authorized stored procedures (zero direct table/view access), 100% parameterized `ADO.NET`, and mandatory per-connection `SESSION_CONTEXT` validation.
+4. **Performance ([`sql/05_performance_and_concurrency_tests.sql`](sql/05_performance_and_concurrency_tests.sql)):** Revised covering and filtered nonclustered indexes over the 120,000+ normalized rows delivering pure `Index Seek` plans (`0` Key Lookups, `0` Sort operators, `0–1 ms` runtime) documented via final actual execution plans in [`REPORT.md`](REPORT.md).
